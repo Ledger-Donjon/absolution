@@ -1,0 +1,20 @@
+repos:
+  - repo: local
+    hooks:
+      - id: format
+        name: zig fmt
+        description: Format files with zig fmt.
+        entry: zig fmt
+        language: system
+        types: [text]
+        pass_filenames: true
+        files: '\.(zig|zon)$'
+        args: ["--check", "--color", "on"]
+      - id: build
+        name: zig build
+        description: Build project
+        entry: zig build
+        language: system
+        types: [text]
+        pass_filenames: false
+        args: [ ]

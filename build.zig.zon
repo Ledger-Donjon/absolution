@@ -1,0 +1,17 @@
+.{
+    .name = .fuzzmate,
+    .version = "0.0.0",
+    .fingerprint = 0x22fff8fc7ec0503b, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.16.0-dev.1484+d0ba6642b",
+    .dependencies = .{
+        .aro = .{
+            .url = "git+https://github.com/Vexu/arocc.git#9e38863bc28b16cde252b5a71e022fdd67b26dc6",
+            .hash = "aro-0.0.0-JSD1Qhe4NgCISKmV8gAvbu6I9rfKhD9tw86_frFnQIDt",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
