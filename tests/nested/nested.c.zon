@@ -1,0 +1,12 @@
+.{.{
+    .name = "astruct",
+    .dims = .{ .items = .{}, .capacity = 0 },
+    .fields = .{ .items = .{.{
+        .name = "._pad0",
+        .bit_width = 1920,
+        .dims = .{ .items = .{}, .capacity = 0 },
+        .is_padding = true,
+        .domain = .top,
+        .domain_owned = false,
+    }}, .capacity = 1 },
+}}

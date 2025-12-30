@@ -2,11 +2,15 @@
     .name = .fuzzmate,
     .version = "0.0.0",
     .fingerprint = 0x22fff8fc7ec0503b, // Changing this has security and trust implications.
-    .minimum_zig_version = "0.16.0-dev.1484+d0ba6642b",
+    .minimum_zig_version = "0.15.2",
     .dependencies = .{
-        .aro = .{
-            .url = "git+https://github.com/Vexu/arocc.git#9e38863bc28b16cde252b5a71e022fdd67b26dc6",
-            .hash = "aro-0.0.0-JSD1Qhe4NgCISKmV8gAvbu6I9rfKhD9tw86_frFnQIDt",
+        .clap = .{
+            .url = "https://github.com/Hejsil/zig-clap/archive/refs/tags/0.11.0.tar.gz",
+            .hash = "clap-0.11.0-oBajB-HnAQDPCKYzwF7rO3qDFwRcD39Q0DALlTSz5H7e",
+        },
+        .aro = .{ // latest version supporting zig 0.15.2
+            .url = "git+https://github.com/vexu/arocc.git#da0aedc2625fc16beceb641823a22ccfe58a73ff",
+            .hash = "aro-0.0.0-JSD1Qv65JwB5C9GAhiWucwo6WLgu1bLgeyW6CMF3NY1j",
         },
     },
     .paths = .{

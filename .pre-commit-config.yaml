@@ -13,7 +13,7 @@ repos:
       - id: build
         name: zig build
         description: Build project
-        entry: zig build
+        entry: zig build -fincremental
         language: system
         types: [text]
         pass_filenames: false
