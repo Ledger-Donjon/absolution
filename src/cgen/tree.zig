@@ -20,6 +20,12 @@ pub const Domain = union(enum) {
 pub const Field = struct {
     /// Field name with dot-path semantics, e.g. ".a" or ".a_pad".
     name: []const u8,
+    /// For synthetic padding fields, the container lvalue expression path (dot-path),
+    /// e.g. "." or ".d.sub". Null for non-padding fields.
+    pad_container: ?[]const u8 = null,
+    /// For synthetic padding fields, bit offset within `pad_container`.
+    /// Meaningful only when `is_padding` is true.
+    offset_bits: usize = 0,
     /// Width in bits.
     bit_width: usize,
     /// Optional array dimensions (empty when scalar).
@@ -33,6 +39,7 @@ pub const Field = struct {
 
     pub fn deinit(self: *Field, allocator: std.mem.Allocator) void {
         allocator.free(self.name);
+        if (self.pad_container) |c| allocator.free(c);
         self.dims.deinit(allocator);
         if (self.domain_owned) {
             switch (self.domain) {

@@ -42,8 +42,12 @@ fn neededBytesFromGlobals(globals: []const Builder.ParsedGlobal) usize {
     for (globals) |g| {
         const global_mult = dimsProduct(g.dims.items);
         for (g.fields.items) |f| {
+            if (f.is_padding) continue;
             const field_mult = dimsProduct(f.dims.items);
-            const bytes = (f.bit_width + 7) / 8;
+            const bytes: usize = switch (f.domain) {
+                .top => (f.bit_width + 7) / 8,
+                .values, .pointers => 1,
+            };
             total += bytes * global_mult * field_mult;
         }
     }

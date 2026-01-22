@@ -195,6 +195,7 @@ fn addPadding(
     prefix: []const u8,
     dims: Dimensions,
     bits: usize,
+    pad_offset_bits: usize,
     pad_index: *usize,
 ) ParseError!void {
     if (bits == 0) return;
@@ -202,8 +203,12 @@ fn addPadding(
     pad_index.* += 1;
     var dims_copy = try dims.clone(allocator);
     errdefer dims_copy.deinit(allocator);
+    const container_copy = try allocator.dupe(u8, prefix);
+    errdefer allocator.free(container_copy);
     try fields.append(allocator, .{
         .name = name,
+        .pad_container = container_copy,
+        .offset_bits = pad_offset_bits,
         .bit_width = bits,
         .dims = dims_copy,
         .is_padding = true,
@@ -236,7 +241,7 @@ fn flattenRecord(
         const offset_bits = @as(usize, @intCast(field.layout.offset_bits));
         const size_bits = @as(usize, @intCast(field.layout.size_bits));
         if (offset_bits > current_bits) {
-            try addPadding(allocator, fields, prefix, dims.*, offset_bits - current_bits, pad_index);
+            try addPadding(allocator, fields, prefix, dims.*, offset_bits - current_bits, current_bits, pad_index);
         }
 
         var field_name = prefix;
@@ -256,7 +261,7 @@ fn flattenRecord(
 
     if (layout.size_bits > current_bits) {
         const tail_bits = @as(usize, @intCast(layout.size_bits - current_bits));
-        try addPadding(allocator, fields, prefix, dims.*, tail_bits, pad_index);
+        try addPadding(allocator, fields, prefix, dims.*, tail_bits, current_bits, pad_index);
     }
 }
 
@@ -300,6 +305,7 @@ fn flattenType(
                 prefix,
                 dims.*,
                 @as(usize, @intCast(layout.size_bits)),
+                0,
                 pad_index,
             );
             return;

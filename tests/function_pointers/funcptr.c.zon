@@ -4,6 +4,8 @@
     .fields = .{ .items = .{
         .{
             .name = ".step",
+            .pad_container = null,
+            .offset_bits = 0,
             .bit_width = 16,
             .dims = .{ .items = .{}, .capacity = 0 },
             .is_padding = false,
@@ -12,6 +14,8 @@
         },
         .{
             .name = "._pad0",
+            .pad_container = ".",
+            .offset_bits = 16,
             .bit_width = 48,
             .dims = .{ .items = .{}, .capacity = 0 },
             .is_padding = true,
@@ -20,6 +24,8 @@
         },
         .{
             .name = ".methods",
+            .pad_container = null,
+            .offset_bits = 0,
             .bit_width = 64,
             .dims = .{ .items = .{12}, .capacity = 16 },
             .is_padding = false,

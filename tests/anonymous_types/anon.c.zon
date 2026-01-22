@@ -4,6 +4,8 @@
     .fields = .{ .items = .{
         .{
             .name = "._pad0",
+            .pad_container = ".",
+            .offset_bits = 0,
             .bit_width = 32,
             .dims = .{ .items = .{}, .capacity = 0 },
             .is_padding = true,
@@ -12,6 +14,8 @@
         },
         .{
             .name = ".b",
+            .pad_container = null,
+            .offset_bits = 0,
             .bit_width = 16,
             .dims = .{ .items = .{}, .capacity = 0 },
             .is_padding = false,
@@ -20,6 +24,8 @@
         },
         .{
             .name = ".c",
+            .pad_container = null,
+            .offset_bits = 0,
             .bit_width = 8,
             .dims = .{ .items = .{}, .capacity = 0 },
             .is_padding = false,
@@ -28,6 +34,8 @@
         },
         .{
             .name = "._pad1",
+            .pad_container = ".",
+            .offset_bits = 56,
             .bit_width = 8,
             .dims = .{ .items = .{}, .capacity = 0 },
             .is_padding = true,
@@ -36,6 +44,8 @@
         },
         .{
             .name = ".d",
+            .pad_container = null,
+            .offset_bits = 0,
             .bit_width = 64,
             .dims = .{ .items = .{}, .capacity = 0 },
             .is_padding = false,
@@ -44,6 +54,8 @@
         },
         .{
             .name = ".e",
+            .pad_container = null,
+            .offset_bits = 0,
             .bit_width = 32,
             .dims = .{ .items = .{12}, .capacity = 16 },
             .is_padding = false,
@@ -52,6 +64,8 @@
         },
         .{
             .name = ".f",
+            .pad_container = null,
+            .offset_bits = 0,
             .bit_width = 64,
             .dims = .{ .items = .{}, .capacity = 16 },
             .is_padding = false,
