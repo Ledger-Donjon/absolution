@@ -1,0 +1,22 @@
+{
+	"name": "Ziglang devcontainer",
+	"build": {
+		"dockerfile": "Containerfile",
+		"options": ["--compress"]
+	},
+	"capAdd": [
+		"SYS_PTRACE"
+	],
+	"securityOpt": [
+		"seccomp=unconfined"
+	],
+	"features": {},
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"ziglang.vscode-zig",
+				"llvm-vs-code-extensions.lldb-dap"
+			]
+		}
+	},
+}

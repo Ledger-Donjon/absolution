@@ -4,3 +4,5 @@ zig-out
 .vscode
 playground
 legacy
+*fuzzer.c
+*fuzzer.o

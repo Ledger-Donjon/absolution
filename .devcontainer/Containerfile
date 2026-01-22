@@ -1,0 +1,15 @@
+# This container installs required dependencies for the VSCODE server and the extensions
+# Used in the current devcontaire.
+# For example zig is installed by the extension but lldb-dap needs to be installed in our
+# container beforehand
+FROM registry.opensuse.org/opensuse/tumbleweed:latest
+
+RUN zypper in --no-recommends -y busybox-netcat findutils gawk git lldb &&\
+    zypper clean --all &&\
+    useradd code
+
+USER code
+
+WORKDIR /home/code
+
+ENV PATH=${PATH}:/home/code/.local/bin
