@@ -9,7 +9,6 @@ const Options = struct {
     out_c: []const u8,
     zon: ?[]const u8,
     seed: ?[]const u8,
-    infer_const_intent: bool,
 };
 
 const cli = clap.parseParamsComptime(
@@ -19,7 +18,6 @@ const cli = clap.parseParamsComptime(
     \\    --out <str>          Output fuzzer C path (default: fuzzer.c).
     \\    --zon <str>          Optional zon output path.
     \\    --seed <str>         Optional seed output path (default: <out>.seed).
-    \\    --infer-const-intent Skip globals inferred as const intent.
     \\
 );
 
@@ -78,18 +76,12 @@ fn parseArgs(allocator: std.mem.Allocator) !Options {
     const zon_path = res.args.zon;
     const seed_path = res.args.seed orelse "fuzzer.seed";
 
-    const infer_const_intent = if (@hasField(@TypeOf(res.args), "infer_const_intent"))
-        res.args.infer_const_intent > 0
-    else
-        false;
-
     return .{
         .targets = targets_path,
         .invariant = res.args.invariant,
         .out_c = out_c_path,
         .zon = zon_path,
         .seed = seed_path,
-        .infer_const_intent = infer_const_intent,
     };
 }
 

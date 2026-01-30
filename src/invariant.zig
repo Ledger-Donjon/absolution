@@ -1,7 +1,13 @@
+//! Invariant loading and application for domain constraints.
+//!
+//! Invariants specify allowed values for global fields, constraining the
+//! fuzzer's sampling to meaningful states.
+
 const std = @import("std");
 const tree = @import("cgen/tree.zig");
 const Parser = @import("Parser.zig");
 
+/// Parsed invariant specification containing domain constraints for globals.
 pub const Invariant = struct {
     globals: []tree.Global,
 

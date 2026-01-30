@@ -306,12 +306,20 @@ fn emitChecker(allocator: std.mem.Allocator, globals: []const Parser.ParsedGloba
             }
 
             const current_depth = loop_stack.depth();
+            // Some targets (notably those using bitfields) can produce padding with a
+            // bit offset that is not byte-aligned. Since the checker operates on
+            // bytes, conservatively skip unaligned padding regions instead of
+            // failing code generation.
+            if (f.offset_bits % 8 != 0) {
+                try loop_stack.closeLoops(field_dims_len);
+                continue;
+            }
+
             try writeIndent(file, current_depth);
             try file.writeAll("for (size_t i = 0; i < ");
             try file.writeAll(bytes_str);
             try file.writeAll("; i++) {\n");
             try writeIndent(file, current_depth + 1);
-            if (f.offset_bits % 8 != 0) return error.UnalignedPaddingOffset;
             const off_bytes_str = try std.fmt.bufPrint(&num_buf, "{d}", .{f.offset_bits / 8});
             const container_path = f.pad_container orelse f.name;
 
@@ -359,11 +367,4 @@ fn emitEntrypoint(file: *std.fs.File) !void {
         \\    return 0;
         \\}
     );
-}
-
-/// Write a buffer to disk, truncating or creating the target file.
-fn writeFile(path: []const u8, contents: []const u8) !void {
-    var file = try std.fs.cwd().createFile(path, .{ .truncate = true });
-    defer file.close();
-    try file.writeAll(contents);
 }

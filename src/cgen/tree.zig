@@ -1,12 +1,6 @@
 const std = @import("std");
 
-const SerializeContext = struct { list: *std.ArrayList(u8), allocator: std.mem.Allocator };
-fn serializeWriteFn(ctx: SerializeContext, bytes: []const u8) error{OutOfMemory}!usize {
-    try ctx.list.appendSlice(ctx.allocator, bytes);
-    return bytes.len;
-}
-
-/// Domain of a field value. This mirrors the legacy invariant notions:
+/// Domain of a field value:
 /// - `top`      : unconstrained bytes pulled from the input stream.
 /// - `values`   : fixed set of literal values to choose from.
 /// - `pointers` : allowed pointer targets (by symbol name).

@@ -1,15 +1,25 @@
+//! C code generation for libFuzzer harnesses.
+//!
+//! This module orchestrates the generation of fuzzer sources from parsed globals,
+//! handling domain constraints, invariant application, and file output.
+
 const tree = @import("cgen/tree.zig");
 const builder = @import("cgen/builder.zig");
 const emit = @import("cgen/emit.zig");
 const invariant = @import("invariant.zig");
 const std = @import("std");
 
-/// Public re-exports for the C generation pipeline.
+/// Public re-exports for direct access to submodules.
 pub const Tree = tree;
 pub const Builder = builder;
 pub const Emit = emit;
 
-/// Convenience helper to build a module from parsed globals and emit a fuzzer.
+/// Generate a complete fuzzer from parsed globals.
+///
+/// Applies any invariant constraints, emits `fuzzer.c` with sampling/checking
+/// functions, and optionally exports the module to `.zon` format.
+///
+/// Returns the number of fuzzer input bytes needed for sampling.
 pub fn generateFuzzer(
     allocator: std.mem.Allocator,
     globals: *std.ArrayList(Builder.ParsedGlobal),
@@ -29,6 +39,7 @@ pub fn generateFuzzer(
     if (zon_path) |zp| {
         var aw = std.Io.Writer.Allocating.init(allocator);
         try std.zon.stringify.serialize(globals.items, .{ .whitespace = true }, &aw.writer);
+        try aw.writer.writeByte('\n'); // Ensure trailing newline
         const zon_bytes = try aw.toOwnedSlice();
         defer allocator.free(zon_bytes);
         try Builder.writeFile(zp, zon_bytes);

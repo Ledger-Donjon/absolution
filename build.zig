@@ -36,14 +36,7 @@ pub fn build(b: *std.Build) void {
     });
 
     b.installArtifact(exe);
-    // Make aro's includes available on install.
-    b.installDirectory(.{
-        .source_dir = aro_dep.path("include"),
-        .install_dir = .prefix,
-        .install_subdir = "include",
-    });
-
-    include_builtin_libc(b, target);
+    install_zig_cc_sysroot_headers(b);
 
     const run_step = b.step("run", "Run the app");
 
@@ -71,50 +64,51 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
+
+    // Integration tests: golden .zon comparison using the library directly
+    const integration_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/integration_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "aro", .module = aro_dep.module("aro") },
+            },
+        }),
+    });
+    const run_integration_tests = b.addRunArtifact(integration_tests);
+
+    const it_step = b.step("it", "Run integration tests (golden .zon comparison)");
+    it_step.dependOn(&run_integration_tests.step);
 }
 
-pub fn include_builtin_libc(b: *std.Build, target: std.Build.ResolvedTarget) void {
-    // Install only the libc headers matching the target ABI (musl vs glibc).
-    const is_musl = switch (target.result.abi) {
-        .musl, .musleabi, .musleabihf, .muslx32 => true,
-        else => false,
-    };
+pub fn install_zig_cc_sysroot_headers(b: *std.Build) void {
+    // Bundle the same header sysroot that `zig cc` uses so fuzzmate's parsing
+    // follows Zig's include resolution order and remains self-hosted.
+    //
+    // `zig cc -E -v` (Linux/glibc example) shows:
+    //   <zig-lib>/include
+    //   <zig-lib>/libc/include/x86-linux-gnu
+    //   <zig-lib>/libc/include/generic-glibc
+    //   <zig-lib>/libc/include/x86-linux-any
+    //   <zig-lib>/libc/include/any-linux-any
+    //   /usr/local/include
+    //   /usr/include
+    //
+    // We preserve this layout under `zig-out/lib/...` so the runtime can add
+    // these directories in the same order without depending on the host.
 
-    const fmt_target = b.fmt("{s}-{s}-{s}", .{
-        @tagName(target.result.cpu.arch),
-        @tagName(target.result.os.tag),
-        @tagName(target.result.abi),
+    const zig_include_dir = b.graph.zig_lib_directory.join(b.allocator, &.{"include"}) catch unreachable;
+    b.installDirectory(.{
+        .source_dir = .{ .cwd_relative = zig_include_dir },
+        .install_dir = .prefix,
+        .install_subdir = "lib/include",
     });
 
-    const use_x86_glibc_fallback = !is_musl and target.result.cpu.arch == .x86_64 and target.result.os.tag == .linux and switch (target.result.abi) {
-        .gnu, .gnux32 => true,
-        else => false,
-    };
-    const target_subdir = if (use_x86_glibc_fallback) "x86-linux-gnu" else fmt_target;
-
-    const libc_include_dir = if (is_musl)
-        b.graph.zig_lib_directory.join(b.allocator, &.{"libc/musl/include"}) catch unreachable
-    else
-        b.graph.zig_lib_directory.join(b.allocator, &.{"libc/glibc/include"}) catch unreachable;
-    const generic_glibc_dir = if (is_musl) null else b.graph.zig_lib_directory.join(b.allocator, &.{"libc/include/generic-glibc"}) catch unreachable;
-    const target_include_dir = b.graph.zig_lib_directory.join(b.allocator, &.{ "libc/include", target_subdir }) catch unreachable;
-
-    // Install the libc-specific includes plus the target-specific overlay.
+    const zig_libc_include_dir = b.graph.zig_lib_directory.join(b.allocator, &.{"libc/include"}) catch unreachable;
     b.installDirectory(.{
-        .source_dir = .{ .cwd_relative = libc_include_dir },
+        .source_dir = .{ .cwd_relative = zig_libc_include_dir },
         .install_dir = .prefix,
-        .install_subdir = "include",
-    });
-    if (generic_glibc_dir) |dir| {
-        b.installDirectory(.{
-            .source_dir = .{ .cwd_relative = dir },
-            .install_dir = .prefix,
-            .install_subdir = "include",
-        });
-    }
-    b.installDirectory(.{
-        .source_dir = .{ .cwd_relative = target_include_dir },
-        .install_dir = .prefix,
-        .install_subdir = "include",
+        .install_subdir = "lib/libc/include",
     });
 }

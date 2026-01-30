@@ -1,6 +1,14 @@
+//! C translation unit parser for global variable extraction.
+//!
+//! Uses the aro compiler frontend to parse C files and extract non-const
+//! global variables along with their field layouts, padding, and array
+//! dimensions.
+
 const aro = @import("aro");
 const std = @import("std");
 const cgen_tree = @import("cgen/tree.zig");
+const include_paths = @import("include_paths.zig");
+const type_flatten = @import("type_flatten.zig");
 
 const ParseError = std.mem.Allocator.Error;
 
@@ -8,17 +16,13 @@ pub const Domain = cgen_tree.Domain;
 pub const ParsedField = cgen_tree.Field;
 pub const ParsedGlobal = cgen_tree.Global;
 
-const Dimensions = std.ArrayListUnmanaged(usize);
 const Fields = std.ArrayListUnmanaged(ParsedField);
-const root_prefix = ".";
 
-// Usual pattern in zig to use a file as a struct
-// I don't really like this pattern and might change this.
-// This file can be seen as a lightweight version of a arocc Driver
-// With simpler APIs that work better for our needs.
-// The point of the Parser struct is to ease the allocation of all
-// needed structs. They all reference each other and can be used
-// directly later on
+/// C parser built on aro, specialized for extracting global variables.
+///
+/// Wraps aro's Compilation, Driver, and Toolchain to provide a simpler API
+/// for parsing translation units and collecting non-const globals with their
+/// flattened field layouts.
 const Parser = @This();
 // Struct parameters
 allocator: std.mem.Allocator,
@@ -33,7 +37,6 @@ initialized: bool = false,
 /// Args:
 ///   allocator: General-purpose allocator used for long-lived buffers.
 ///   arena: Short-lived arena used by aro internals.
-///   io: Threaded IO instance passed to aro for file access.
 pub fn init(allocator: std.mem.Allocator, arena: std.mem.Allocator) !*Parser {
     const p = try allocator.create(Parser);
     errdefer allocator.destroy(p);
@@ -56,6 +59,9 @@ pub fn init(allocator: std.mem.Allocator, arena: std.mem.Allocator) !*Parser {
     // Create compilation with diagnostics pointing at final storage
     p.comp = try aro.Compilation.initDefault(allocator, arena, &p.diagnostics, std.fs.cwd());
     errdefer p.comp.deinit();
+    // Match `zig cc` more closely (clang frontend defaults).
+    p.comp.langopts.setEmulatedCompiler(.clang);
+    p.comp.langopts.standard = .gnu17;
 
     // Compute resource_dir relative to executable and store a duped copy
     const exe_path = try std.fs.selfExePathAlloc(p.allocator);
@@ -70,7 +76,16 @@ pub fn init(allocator: std.mem.Allocator, arena: std.mem.Allocator) !*Parser {
     p.toolchain = .{ .driver = &p.driver, .filesystem = .{ .fake = &.{} } };
     errdefer p.toolchain.deinit();
     try p.toolchain.discover();
-    try p.toolchain.defineSystemIncludes();
+
+    // Suppress aro's default include paths; we configure them ourselves to
+    // match `zig cc` behavior using the bundled sysroot under `<prefix>/lib/...`.
+    p.driver.nostdinc = true;
+    p.driver.nostdlibinc = true;
+    p.driver.nobuiltininc = true;
+
+    // Configure include search order from the bundled sysroot.
+    try include_paths.addZigCcImplicitIncludes(&p.comp, resource_dir_dupe);
+
     p.initialized = true;
 
     return p;
@@ -97,13 +112,99 @@ pub fn free_globals(allocator: std.mem.Allocator, globals: *std.ArrayList(Parsed
     globals.deinit(allocator);
 }
 
+/// Check if a type is effectively const, including arrays of const elements.
+/// This handles cases like `const T arr[N]` where the top-level array type
+/// may not be const but the element type is.
+fn isEffectivelyConst(comp: *aro.Compilation, qt: aro.QualType) bool {
+    // Check top-level const
+    if (qt.@"const") return true;
+
+    // Peel through arrays to check element type constness
+    var current = qt;
+    while (current.get(comp, .array)) |arr| {
+        current = arr.elem;
+        if (current.@"const") return true;
+    }
+
+    return false;
+}
+
+/// Preprocess source file using `zig cc -E`, falling back to direct parsing.
+/// Returns the source and optionally the path to a temp file to delete afterward.
+fn preprocessSource(
+    p: *Parser,
+    path: []const u8,
+) !struct { source: aro.Source, pp_to_delete: ?[]const u8 } {
+    const gpa = p.driver.comp.gpa;
+    const explicit_zig = std.process.getEnvVarOwned(gpa, "FUZZMATE_ZIG") catch null;
+    defer if (explicit_zig) |v| gpa.free(v);
+
+    const zig_exe = if (explicit_zig) |v| v else "zig";
+
+    // Write preprocessed output to disk to avoid buffering huge stdout in memory.
+    const pp_dir = ".zig-cache/fuzzmate";
+    std.fs.cwd().makePath(pp_dir) catch return .{
+        .source = try p.driver.comp.addSourceFromPath(path),
+        .pp_to_delete = null,
+    };
+
+    const pp_rel_path = try std.fmt.allocPrint(p.comp.arena, "{s}/pp-{d}.i", .{ pp_dir, std.time.nanoTimestamp() });
+    var pp_file = std.fs.cwd().createFile(pp_rel_path, .{ .truncate = true }) catch return .{
+        .source = try p.driver.comp.addSourceFromPath(path),
+        .pp_to_delete = null,
+    };
+    defer pp_file.close();
+
+    var argv = [_][]const u8{ zig_exe, "cc", "-E", path };
+    var child = std.process.Child.init(&argv, gpa);
+    child.expand_arg0 = if (explicit_zig != null) .no_expand else .expand;
+    child.stdin_behavior = .Ignore;
+    child.stdout_behavior = .Pipe;
+    child.stderr_behavior = .Ignore;
+
+    child.spawn() catch return .{
+        .source = try p.driver.comp.addSourceFromPath(path),
+        .pp_to_delete = null,
+    };
+
+    var buf: [64 * 1024]u8 = undefined;
+    const child_stdout = child.stdout.?;
+    while (true) {
+        const n = try child_stdout.read(&buf);
+        if (n == 0) break;
+        try pp_file.writeAll(buf[0..n]);
+    }
+
+    const term = try child.wait();
+    switch (term) {
+        .Exited => |code| if (code != 0) return .{
+            .source = try p.driver.comp.addSourceFromPath(path),
+            .pp_to_delete = null,
+        },
+        else => return .{
+            .source = try p.driver.comp.addSourceFromPath(path),
+            .pp_to_delete = null,
+        },
+    }
+
+    return .{
+        .source = try p.driver.comp.addSourceFromPath(pp_rel_path),
+        .pp_to_delete = pp_rel_path,
+    };
+}
+
 /// Collect non-const, user-defined globals along with their bit widths.
 pub fn collect_globals(p: *Parser, path: []const u8, allocator: std.mem.Allocator) !std.ArrayList(ParsedGlobal) {
-    const source = try p.driver.comp.addSourceFromPath(path);
+    // To match `zig cc` include semantics and avoid frontend differences in
+    // complex header stacks, prefer preprocessing the translation unit with
+    // `zig cc -E` when possible.
+    const pp_result = try preprocessSource(p, path);
+    defer if (pp_result.pp_to_delete) |pp_path| std.fs.cwd().deleteFile(pp_path) catch {};
+
     const builtin = try p.driver.comp.generateBuiltinMacros(p.driver.system_defines);
     var pp = try aro.Preprocessor.initDefault(p.driver.comp);
     defer pp.deinit();
-    pp.preprocessSources(&.{ source, builtin }) catch |err| {
+    pp.preprocessSources(&.{ pp_result.source, builtin }) catch |err| {
         // Print compilation errors
         var stdout_buf: [1024]u8 = undefined;
         var stdout = std.fs.File.stdout().writer(&stdout_buf);
@@ -127,8 +228,8 @@ pub fn collect_globals(p: *Parser, path: []const u8, allocator: std.mem.Allocato
                 const expanded = loc.expand(p.driver.comp);
                 // Ignore system variables
                 if (expanded.kind != .user) continue;
-                // Ignore const-qualified objects
-                if (variable.qt.@"const") continue;
+                // Ignore const-qualified objects (including arrays of const elements)
+                if (isEffectivelyConst(tree.comp, variable.qt)) continue;
                 // Ignore incomplete types
                 if (variable.qt.hasIncompleteSize(tree.comp)) continue;
 
@@ -136,25 +237,16 @@ pub fn collect_globals(p: *Parser, path: []const u8, allocator: std.mem.Allocato
                 const copied_name = try allocator.dupe(u8, name_slice);
                 errdefer allocator.free(copied_name);
 
-                var peeled = try peelTopLevelArrayDims(allocator, tree, variable.qt);
+                var peeled = try type_flatten.peelTopLevelArrayDims(allocator, tree, variable.qt);
                 errdefer peeled.dims.deinit(allocator);
 
                 var fields = Fields{};
-                // If flattening fails, we need to clean up fields that were added.
-                // Since ParsedField (cgen_tree.Field) now has a deinit, we can loop and deinit.
-                // Or define a helper. Since we're inside collect_globals, we can use errdefer with a lambda or helper.
-                // However, fields is managed by ArrayListUnmanaged.
-                // Let's create a small helper for cleaning up partial fields list if flattening fails.
                 errdefer {
                     for (fields.items) |*f| f.deinit(allocator);
                     fields.deinit(allocator);
                 }
 
-                var dims = Dimensions{};
-                defer dims.deinit(allocator);
-
-                var pad_index: usize = 0;
-                try flattenType(allocator, tree, peeled.qt, root_prefix, &dims, &fields, &pad_index);
+                try type_flatten.flattenGlobal(allocator, tree, peeled.qt, &fields);
 
                 try globals.append(allocator, .{ .name = copied_name, .dims = peeled.dims, .fields = fields });
             },
@@ -163,183 +255,4 @@ pub fn collect_globals(p: *Parser, path: []const u8, allocator: std.mem.Allocato
     }
 
     return globals;
-}
-
-/// Extract top-level array dimensions, returning the innermost element type and the peeled dimensions.
-fn peelTopLevelArrayDims(
-    allocator: std.mem.Allocator,
-    tree: aro.Tree,
-    qt: aro.QualType,
-) ParseError!struct { qt: aro.QualType, dims: Dimensions } {
-    var dims_list = Dimensions{};
-    errdefer dims_list.deinit(allocator);
-    var current = qt;
-
-    while (current.get(tree.comp, .array)) |arr| {
-        switch (arr.len) {
-            .fixed, .static => |len| {
-                try dims_list.append(allocator, @intCast(len));
-                current = arr.elem;
-            },
-            else => break,
-        }
-    }
-
-    return .{ .qt = current, .dims = dims_list };
-}
-
-/// Append a synthetic padding field with the given bit width.
-fn addPadding(
-    allocator: std.mem.Allocator,
-    fields: *std.ArrayListUnmanaged(ParsedField),
-    prefix: []const u8,
-    dims: Dimensions,
-    bits: usize,
-    pad_offset_bits: usize,
-    pad_index: *usize,
-) ParseError!void {
-    if (bits == 0) return;
-    const name = try std.fmt.allocPrint(allocator, "{s}_pad{d}", .{ prefix, pad_index.* });
-    pad_index.* += 1;
-    var dims_copy = try dims.clone(allocator);
-    errdefer dims_copy.deinit(allocator);
-    const container_copy = try allocator.dupe(u8, prefix);
-    errdefer allocator.free(container_copy);
-    try fields.append(allocator, .{
-        .name = name,
-        .pad_container = container_copy,
-        .offset_bits = pad_offset_bits,
-        .bit_width = bits,
-        .dims = dims_copy,
-        .is_padding = true,
-        .domain = .top,
-    });
-}
-
-/// Join a prefix and field name, avoiding duplicate dots for root prefixes.
-fn joinFieldName(allocator: std.mem.Allocator, prefix: []const u8, name: []const u8) ParseError![]const u8 {
-    if (prefix.len == 0) return std.fmt.allocPrint(allocator, ".{s}", .{name});
-    const needs_dot = prefix[prefix.len - 1] != '.';
-    return std.fmt.allocPrint(allocator, "{s}{s}{s}", .{ prefix, if (needs_dot) "." else "", name });
-}
-
-/// Flatten record fields into ParsedField entries, adding padding as needed.
-fn flattenRecord(
-    allocator: std.mem.Allocator,
-    tree: aro.Tree,
-    record: aro.Type.Record,
-    prefix: []const u8,
-    dims: *Dimensions,
-    fields: *std.ArrayListUnmanaged(ParsedField),
-    pad_index: *usize,
-) ParseError!void {
-    const layout = record.layout orelse return;
-    var current_bits: usize = 0;
-
-    for (record.fields) |field| {
-        if (field.layout.offset_bits == std.math.maxInt(u64)) continue;
-        const offset_bits = @as(usize, @intCast(field.layout.offset_bits));
-        const size_bits = @as(usize, @intCast(field.layout.size_bits));
-        if (offset_bits > current_bits) {
-            try addPadding(allocator, fields, prefix, dims.*, offset_bits - current_bits, current_bits, pad_index);
-        }
-
-        var field_name = prefix;
-        var field_name_owned = false;
-        if (field.name_tok != 0) {
-            const fname = tree.tokSlice(field.name_tok);
-            field_name = try joinFieldName(allocator, prefix, fname);
-            field_name_owned = true;
-        }
-
-        defer {
-            if (field_name_owned) allocator.free(field_name);
-        }
-        try flattenType(allocator, tree, field.qt, field_name, dims, fields, pad_index);
-        current_bits = @max(current_bits, offset_bits + size_bits);
-    }
-
-    if (layout.size_bits > current_bits) {
-        const tail_bits = @as(usize, @intCast(layout.size_bits - current_bits));
-        try addPadding(allocator, fields, prefix, dims.*, tail_bits, current_bits, pad_index);
-    }
-}
-
-/// Flatten any supported type (scalars, arrays, records, unions) into fields.
-fn flattenType(
-    allocator: std.mem.Allocator,
-    tree: aro.Tree,
-    qt: aro.QualType,
-    prefix: []const u8,
-    dims: *Dimensions,
-    fields: *std.ArrayListUnmanaged(ParsedField),
-    pad_index: *usize,
-) ParseError!void {
-    _ = qt.sizeofOrNull(tree.comp) orelse return;
-
-    if (qt.get(tree.comp, .array)) |arr| {
-        switch (arr.len) {
-            .fixed, .static => |len| {
-                try dims.append(allocator, @intCast(len));
-                defer _ = dims.pop();
-                try flattenType(allocator, tree, arr.elem, prefix, dims, fields, pad_index);
-                return;
-            },
-            else => return,
-        }
-    }
-
-    const base = qt.base(tree.comp).type;
-    switch (base) {
-        .@"struct" => |rec| {
-            try flattenRecord(allocator, tree, rec, prefix, dims, fields, pad_index);
-            return;
-        },
-        .@"union" => |rec| {
-            const layout = rec.layout orelse return;
-            // Unsupported union: emit padding equal to its max size so we do not
-            // consume fuzzer bytes for the unknown variant.
-            try addPadding(
-                allocator,
-                fields,
-                prefix,
-                dims.*,
-                @as(usize, @intCast(layout.size_bits)),
-                0,
-                pad_index,
-            );
-            return;
-        },
-        else => {},
-    }
-
-    const size_bytes = qt.sizeofOrNull(tree.comp) orelse return;
-    const bits = @as(usize, @intCast(size_bytes)) * 8;
-    var domain: Domain = .top;
-    const ty = qt.type(tree.comp);
-    if (ty == .bool) {
-        domain = .{ .values = &.{ "0", "1" } };
-    }
-
-    var dims_info = try dims.*.clone(allocator);
-    errdefer dims_info.deinit(allocator);
-
-    const name_copy = try allocator.dupe(u8, prefix);
-    errdefer allocator.free(name_copy);
-
-    try fields.append(allocator, .{
-        .name = name_copy,
-        .bit_width = bits,
-        .dims = dims_info,
-        .is_padding = false,
-        .domain = domain,
-    });
-}
-
-/// Return the record descriptor when the QualType is a struct, else null.
-fn getStructRecord(qt: aro.QualType, comp: *const aro.Compilation) ?aro.Type.Record {
-    return switch (qt.base(comp).type) {
-        .@"struct" => |record| record,
-        else => null,
-    };
 }

@@ -17,4 +17,20 @@ repos:
         language: system
         types: [text]
         pass_filenames: false
-        args: [ ]
+        args: []
+      - id: test
+        name: zig test
+        description: Run unit tests
+        entry: zig build test
+        language: system
+        types: [text]
+        pass_filenames: false
+        args: []
+      - id: integration-test
+        name: integration tests
+        description: Run integration tests (golden .zon comparison)
+        entry: zig build it
+        language: system
+        types: [text]
+        pass_filenames: false
+        args: []
