@@ -1,6 +1,9 @@
 .{.{
     .name = "anarray",
-    .dims = .{ .items = .{ 10, 10 }, .capacity = 16 },
+    .source_file = "tests/arrays/array.c",
+    .size_bytes = 800,
+    .is_static = false,
+    .dims = .{ .items = .{ .{ .len = 10, .stride_bytes = 80 }, .{ .len = 10, .stride_bytes = 8 } }, .capacity = 8 },
     .fields = .{ .items = .{
         .{
             .name = ".a",
@@ -16,7 +19,7 @@
         .{
             .name = ".b",
             .pad_container = null,
-            .offset_bits = 0,
+            .offset_bits = 32,
             .bit_width = 16,
             .dims = .{ .items = .{}, .capacity = 0 },
             .dim_positions = .{ .items = .{}, .capacity = 0 },
@@ -27,7 +30,7 @@
         .{
             .name = ".c",
             .pad_container = null,
-            .offset_bits = 0,
+            .offset_bits = 48,
             .bit_width = 8,
             .dims = .{ .items = .{}, .capacity = 0 },
             .dim_positions = .{ .items = .{}, .capacity = 0 },

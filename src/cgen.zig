@@ -23,7 +23,7 @@ pub const Emit = emit;
 pub fn generateFuzzer(
     allocator: std.mem.Allocator,
     globals: *std.ArrayList(Builder.ParsedGlobal),
-    target_path: []const u8,
+    redef_path: []const u8,
     out_c_path: []const u8,
     zon_path: ?[]const u8,
     inv: ?invariant.Invariant,
@@ -34,7 +34,7 @@ pub fn generateFuzzer(
 
     const needed_bytes = neededBytesFromGlobals(globals.items);
 
-    try Emit.writeFuzzerC(allocator, globals.items, needed_bytes, out_c_path, target_path);
+    try Emit.writeFuzzerC(allocator, globals.items, needed_bytes, out_c_path, redef_path);
 
     if (zon_path) |zp| {
         var aw = std.Io.Writer.Allocating.init(allocator);
@@ -65,8 +65,8 @@ fn neededBytesFromGlobals(globals: []const Builder.ParsedGlobal) usize {
     return total;
 }
 
-fn dimsProduct(dims: []const usize) usize {
+fn dimsProduct(dims: []const Tree.Dimension) usize {
     var prod: usize = 1;
-    for (dims) |d| prod *= d;
+    for (dims) |d| prod *= d.len;
     return prod;
 }

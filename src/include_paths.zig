@@ -6,15 +6,15 @@
 const aro = @import("aro");
 const std = @import("std");
 
-/// Configure the compilation's include search paths to match `zig cc` behavior.
+/// Configure the compilation's include search paths using the bundled sysroot.
 /// The bundled sysroot lives under `resource_dir/lib/...`. We add directories
-/// in the same order that `zig cc -E -v` reports:
+/// in the same order that `zig cc -E -v` reports, except we intentionally omit
+/// /usr/local/include and /usr/include to keep fuzzmate self-contained:
 ///   1. <prefix>/lib/include (Zig's compiler-rt / intrinsic headers)
 ///   2. <prefix>/lib/libc/include/<target-triple> (target-specific libc headers)
 ///   3. <prefix>/lib/libc/include/generic-<abi-family> (generic libc headers)
 ///   4. <prefix>/lib/libc/include/<arch>-<os>-any (arch+os wildcards)
 ///   5. <prefix>/lib/libc/include/any-<os>-any (os-only wildcards)
-///   6. /usr/local/include and /usr/include on Unix-like hosts
 pub fn addZigCcImplicitIncludes(comp: *aro.Compilation, resource_dir: []const u8) !void {
     const target = comp.target;
     const arch = target.cpu.arch;
@@ -56,11 +56,11 @@ pub fn addZigCcImplicitIncludes(comp: *aro.Compilation, resource_dir: []const u8
         try comp.addSystemIncludeDir(any_os_include);
     }
 
-    // 6. Host system include directories (Unix-like systems only)
-    if (isUnixLike(os)) {
-        try comp.addSystemIncludeDir("/usr/local/include");
-        try comp.addSystemIncludeDir("/usr/include");
-    }
+    // Note: We intentionally do NOT add /usr/local/include or /usr/include.
+    // fuzzmate is self-contained and uses only the bundled headers from the
+    // build-time copied sysroot. This ensures:
+    //   1. Reproducible builds regardless of host system headers
+    //   2. Proper system header tracking for filtering system symbols
 }
 
 /// Determine the target-specific libc include subdirectory.

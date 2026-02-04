@@ -31,6 +31,7 @@ diagnostics: aro.Diagnostics,
 comp: aro.Compilation,
 driver: aro.Driver,
 toolchain: aro.Toolchain,
+builtin_source: aro.Source,
 initialized: bool = false,
 
 /// Initialize the parser, discover the toolchain, and prime diagnostics.
@@ -52,6 +53,7 @@ pub fn init(allocator: std.mem.Allocator, arena: std.mem.Allocator) !*Parser {
         .comp = undefined,
         .driver = undefined,
         .toolchain = undefined,
+        .builtin_source = undefined,
         .initialized = false,
     };
     errdefer p.diagnostics.deinit();
@@ -59,9 +61,9 @@ pub fn init(allocator: std.mem.Allocator, arena: std.mem.Allocator) !*Parser {
     // Create compilation with diagnostics pointing at final storage
     p.comp = try aro.Compilation.initDefault(allocator, arena, &p.diagnostics, std.fs.cwd());
     errdefer p.comp.deinit();
-    // Match `zig cc` more closely (clang frontend defaults).
+    // Use clang frontend defaults (same as zig cc).
     p.comp.langopts.setEmulatedCompiler(.clang);
-    p.comp.langopts.standard = .gnu17;
+    p.comp.langopts.standard = .c23;
 
     // Compute resource_dir relative to executable and store a duped copy
     const exe_path = try std.fs.selfExePathAlloc(p.allocator);
@@ -86,6 +88,7 @@ pub fn init(allocator: std.mem.Allocator, arena: std.mem.Allocator) !*Parser {
     // Configure include search order from the bundled sysroot.
     try include_paths.addZigCcImplicitIncludes(&p.comp, resource_dir_dupe);
 
+    p.builtin_source = try p.driver.comp.generateBuiltinMacros(p.driver.system_defines);
     p.initialized = true;
 
     return p;
@@ -129,82 +132,18 @@ fn isEffectivelyConst(comp: *aro.Compilation, qt: aro.QualType) bool {
     return false;
 }
 
-/// Preprocess source file using `zig cc -E`, falling back to direct parsing.
-/// Returns the source and optionally the path to a temp file to delete afterward.
-fn preprocessSource(
-    p: *Parser,
-    path: []const u8,
-) !struct { source: aro.Source, pp_to_delete: ?[]const u8 } {
-    const gpa = p.driver.comp.gpa;
-    const explicit_zig = std.process.getEnvVarOwned(gpa, "FUZZMATE_ZIG") catch null;
-    defer if (explicit_zig) |v| gpa.free(v);
-
-    const zig_exe = if (explicit_zig) |v| v else "zig";
-
-    // Write preprocessed output to disk to avoid buffering huge stdout in memory.
-    const pp_dir = ".zig-cache/fuzzmate";
-    std.fs.cwd().makePath(pp_dir) catch return .{
-        .source = try p.driver.comp.addSourceFromPath(path),
-        .pp_to_delete = null,
-    };
-
-    const pp_rel_path = try std.fmt.allocPrint(p.comp.arena, "{s}/pp-{d}.i", .{ pp_dir, std.time.nanoTimestamp() });
-    var pp_file = std.fs.cwd().createFile(pp_rel_path, .{ .truncate = true }) catch return .{
-        .source = try p.driver.comp.addSourceFromPath(path),
-        .pp_to_delete = null,
-    };
-    defer pp_file.close();
-
-    var argv = [_][]const u8{ zig_exe, "cc", "-E", path };
-    var child = std.process.Child.init(&argv, gpa);
-    child.expand_arg0 = if (explicit_zig != null) .no_expand else .expand;
-    child.stdin_behavior = .Ignore;
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Ignore;
-
-    child.spawn() catch return .{
-        .source = try p.driver.comp.addSourceFromPath(path),
-        .pp_to_delete = null,
-    };
-
-    var buf: [64 * 1024]u8 = undefined;
-    const child_stdout = child.stdout.?;
-    while (true) {
-        const n = try child_stdout.read(&buf);
-        if (n == 0) break;
-        try pp_file.writeAll(buf[0..n]);
-    }
-
-    const term = try child.wait();
-    switch (term) {
-        .Exited => |code| if (code != 0) return .{
-            .source = try p.driver.comp.addSourceFromPath(path),
-            .pp_to_delete = null,
-        },
-        else => return .{
-            .source = try p.driver.comp.addSourceFromPath(path),
-            .pp_to_delete = null,
-        },
-    }
-
-    return .{
-        .source = try p.driver.comp.addSourceFromPath(pp_rel_path),
-        .pp_to_delete = pp_rel_path,
-    };
-}
-
 /// Collect non-const, user-defined globals along with their bit widths.
+///
+/// Uses arocc's native preprocessing with the bundled sysroot headers.
+/// System headers are automatically filtered via Source.Kind tracking.
 pub fn collect_globals(p: *Parser, path: []const u8, allocator: std.mem.Allocator) !std.ArrayList(ParsedGlobal) {
-    // To match `zig cc` include semantics and avoid frontend differences in
-    // complex header stacks, prefer preprocessing the translation unit with
-    // `zig cc -E` when possible.
-    const pp_result = try preprocessSource(p, path);
-    defer if (pp_result.pp_to_delete) |pp_path| std.fs.cwd().deleteFile(pp_path) catch {};
+    // Load source file directly - arocc handles all preprocessing natively
+    // using the bundled sysroot headers configured in init().
+    const source = try p.driver.comp.addSourceFromPath(path);
 
-    const builtin = try p.driver.comp.generateBuiltinMacros(p.driver.system_defines);
     var pp = try aro.Preprocessor.initDefault(p.driver.comp);
     defer pp.deinit();
-    pp.preprocessSources(&.{ pp_result.source, builtin }) catch |err| {
+    pp.preprocessSources(&.{ source, p.builtin_source }) catch |err| {
         // Print compilation errors
         var stdout_buf: [1024]u8 = undefined;
         var stdout = std.fs.File.stdout().writer(&stdout_buf);
@@ -256,28 +195,48 @@ pub fn collect_globals(p: *Parser, path: []const u8, allocator: std.mem.Allocato
                 // where `type_name` is interpreted as a type, not a variable.
                 if (typedef_names.contains(name_slice)) continue;
 
-                // Heuristic: skip variables that look like typedef parsing artifacts.
-                // These occur when aro parses constructs like:
-                //   typedef int (*foo_t)(void) __attribute__((warn_unused_result));
-                // and incorrectly creates both a typedef and a variable named `foo_t`.
+                // Heuristic: skip variables that look like parsing artifacts.
+                // These occur in two scenarios:
+                //
+                // 1. Typedef parsing artifacts: aro parses constructs like:
+                //      typedef int (*foo_t)(void) __attribute__((warn_unused_result));
+                //    and incorrectly creates both a typedef and a variable named `foo_t`.
+                //
+                // 2. Function parameter artifacts: aro sometimes emits .variable nodes
+                //    for function parameters (e.g., `size_t size` from a function signature),
+                //    which should not appear in root_decls at all.
+                //
                 // We detect these by checking for:
                 // - No initializer (tentative definition)
                 // - No actual definition
-                // - Type is `int` (the fallback type for parse errors)
-                // - Name ends with `_t` (common typedef naming convention)
+                // - 'auto' storage class (invalid at file scope in C)
+                // - Type is a primitive integer type (not a user-defined type like struct/typedef)
                 if (variable.initializer == null and variable.definition == null and
-                    !variable.qt.isInvalid())
+                    variable.storage_class == .auto and !variable.qt.isInvalid())
                 {
                     const ty = variable.qt.type(tree.comp);
-                    if (ty == .int and name_slice.len > 2 and
-                        std.mem.endsWith(u8, name_slice, "_t"))
-                    {
+                    // Filter if type is a primitive integer (covers all int sizes via .int tag)
+                    // This catches spurious variables from function parameters like `size_t size`
+                    if (ty == .int) {
                         continue;
                     }
                 }
 
                 const copied_name = try allocator.dupe(u8, name_slice);
                 errdefer allocator.free(copied_name);
+
+                // Capture source file path from the translation unit
+                const source_file_path = path;
+                const copied_source_file = try allocator.dupe(u8, source_file_path);
+                errdefer allocator.free(copied_source_file);
+
+                // Check if the variable has static storage class (internal linkage)
+                const is_static = variable.storage_class == .static;
+
+                // Calculate size in bytes (we already know it's complete from the check above)
+                const size_val = variable.qt.sizeofOrNull(tree.comp);
+                if (size_val == null) continue;
+                const size_bytes: u64 = @intCast(size_val.?);
 
                 var peeled = try type_flatten.peelTopLevelArrayDims(allocator, tree, variable.qt);
                 errdefer peeled.dims.deinit(allocator);
@@ -290,7 +249,14 @@ pub fn collect_globals(p: *Parser, path: []const u8, allocator: std.mem.Allocato
 
                 try type_flatten.flattenGlobal(allocator, tree, peeled.qt, &fields);
 
-                try globals.append(allocator, .{ .name = copied_name, .dims = peeled.dims, .fields = fields });
+                try globals.append(allocator, .{
+                    .name = copied_name,
+                    .source_file = copied_source_file,
+                    .size_bytes = size_bytes,
+                    .is_static = is_static,
+                    .dims = peeled.dims,
+                    .fields = fields,
+                });
             },
             else => {},
         }

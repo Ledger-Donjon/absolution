@@ -11,7 +11,7 @@ pub const Domain = cgen_tree.Domain;
 pub const ParsedField = cgen_tree.Field;
 
 const ParseError = std.mem.Allocator.Error;
-const Dimensions = std.ArrayListUnmanaged(usize);
+const Dimensions = std.ArrayListUnmanaged(cgen_tree.Dimension);
 const DimPositions = std.ArrayListUnmanaged(usize);
 const Fields = std.ArrayListUnmanaged(ParsedField);
 
@@ -27,8 +27,8 @@ const DimStack = struct {
         self.positions.deinit(allocator);
     }
 
-    fn append(self: *DimStack, allocator: std.mem.Allocator, dim: usize, position: usize) !void {
-        try self.dims.append(allocator, dim);
+    fn append(self: *DimStack, allocator: std.mem.Allocator, len: usize, stride: u64, position: usize) !void {
+        try self.dims.append(allocator, .{ .len = len, .stride_bytes = stride });
         try self.positions.append(allocator, position);
     }
 
@@ -59,7 +59,8 @@ pub fn peelTopLevelArrayDims(
     while (current.get(tree.comp, .array)) |arr| {
         switch (arr.len) {
             .fixed, .static => |len| {
-                try dims_list.append(allocator, @intCast(len));
+                const elem_size = arr.elem.sizeofOrNull(tree.comp) orelse 1; // Should be complete
+                try dims_list.append(allocator, .{ .len = @intCast(len), .stride_bytes = elem_size });
                 current = arr.elem;
             },
             else => break,
@@ -81,7 +82,7 @@ pub fn flattenGlobal(
     defer dim_stack.deinit(allocator);
 
     var pad_index: usize = 0;
-    try flattenType(allocator, tree, qt, root_prefix, &dim_stack, fields, &pad_index);
+    try flattenType(allocator, tree, qt, root_prefix, &dim_stack, fields, &pad_index, 0);
 }
 
 /// Flatten any supported type (scalars, arrays, records, unions) into fields.
@@ -93,6 +94,7 @@ pub fn flattenType(
     dim_stack: *DimStack,
     fields: *Fields,
     pad_index: *usize,
+    offset_bits: usize,
 ) ParseError!void {
     _ = qt.sizeofOrNull(tree.comp) orelse return;
 
@@ -101,9 +103,10 @@ pub fn flattenType(
             .fixed, .static => |len| {
                 // Record the dimension along with the current prefix length.
                 // This tells us where in the final path to insert the array index.
-                try dim_stack.append(allocator, @intCast(len), prefix.len);
+                const elem_size = arr.elem.sizeofOrNull(tree.comp) orelse 1;
+                try dim_stack.append(allocator, @intCast(len), elem_size, prefix.len);
                 defer dim_stack.pop();
-                try flattenType(allocator, tree, arr.elem, prefix, dim_stack, fields, pad_index);
+                try flattenType(allocator, tree, arr.elem, prefix, dim_stack, fields, pad_index, offset_bits);
                 return;
             },
             else => return,
@@ -113,7 +116,7 @@ pub fn flattenType(
     const base = qt.base(tree.comp).type;
     switch (base) {
         .@"struct" => |rec| {
-            try flattenRecord(allocator, tree, rec, prefix, dim_stack, fields, pad_index);
+            try flattenRecord(allocator, tree, rec, prefix, dim_stack, fields, pad_index, offset_bits);
             return;
         },
         .@"union" => |rec| {
@@ -126,7 +129,7 @@ pub fn flattenType(
                 prefix,
                 dim_stack.*,
                 @as(usize, @intCast(layout.size_bits)),
-                0,
+                offset_bits,
                 pad_index,
             );
             return;
@@ -153,6 +156,7 @@ pub fn flattenType(
 
     try fields.append(allocator, .{
         .name = name_copy,
+        .offset_bits = offset_bits,
         .bit_width = bits,
         .dims = dims_info,
         .dim_positions = positions_info,
@@ -170,6 +174,7 @@ fn flattenRecord(
     dim_stack: *DimStack,
     fields: *Fields,
     pad_index: *usize,
+    base_offset_bits: usize,
 ) ParseError!void {
     const layout = record.layout orelse return;
     var current_bits: usize = 0;
@@ -179,7 +184,7 @@ fn flattenRecord(
         const offset_bits = @as(usize, @intCast(field.layout.offset_bits));
         const size_bits = @as(usize, @intCast(field.layout.size_bits));
         if (offset_bits > current_bits) {
-            try addPadding(allocator, fields, prefix, dim_stack.*, offset_bits - current_bits, current_bits, pad_index);
+            try addPadding(allocator, fields, prefix, dim_stack.*, offset_bits - current_bits, base_offset_bits + current_bits, pad_index);
         }
 
         var field_name = prefix;
@@ -204,7 +209,7 @@ fn flattenRecord(
             false;
 
         if (!is_bitfield) {
-            try flattenType(allocator, tree, field.qt, field_name, dim_stack, fields, pad_index);
+            try flattenType(allocator, tree, field.qt, field_name, dim_stack, fields, pad_index, base_offset_bits + offset_bits);
         }
         // Bit-fields are left as unsampled storage (zeros from memset).
 
@@ -213,7 +218,7 @@ fn flattenRecord(
 
     if (layout.size_bits > current_bits) {
         const tail_bits = @as(usize, @intCast(layout.size_bits - current_bits));
-        try addPadding(allocator, fields, prefix, dim_stack.*, tail_bits, current_bits, pad_index);
+        try addPadding(allocator, fields, prefix, dim_stack.*, tail_bits, base_offset_bits + current_bits, pad_index);
     }
 }
 

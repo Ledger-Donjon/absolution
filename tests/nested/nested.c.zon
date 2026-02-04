@@ -1,5 +1,8 @@
 .{.{
     .name = "astruct",
+    .source_file = "tests/nested/nested.c",
+    .size_bytes = 240,
+    .is_static = false,
     .dims = .{ .items = .{}, .capacity = 0 },
     .fields = .{ .items = .{.{
         .name = "._pad0",

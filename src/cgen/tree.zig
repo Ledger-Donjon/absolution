@@ -1,5 +1,10 @@
 const std = @import("std");
 
+pub const Dimension = struct {
+    len: usize,
+    stride_bytes: u64,
+};
+
 /// Domain of a field value:
 /// - `top`      : unconstrained bytes pulled from the input stream.
 /// - `values`   : fixed set of literal values to choose from.
@@ -17,13 +22,12 @@ pub const Field = struct {
     /// For synthetic padding fields, the container lvalue expression path (dot-path),
     /// e.g. "." or ".d.sub". Null for non-padding fields.
     pad_container: ?[]const u8 = null,
-    /// For synthetic padding fields, bit offset within `pad_container`.
-    /// Meaningful only when `is_padding` is true.
+    /// Offset in bits from the start of the global variable.
     offset_bits: usize = 0,
     /// Width in bits.
     bit_width: usize,
     /// Optional array dimensions (empty when scalar).
-    dims: std.ArrayListUnmanaged(usize) = .{},
+    dims: std.ArrayListUnmanaged(Dimension) = .{},
     /// Byte offsets in `name` where each dimension's index should be inserted.
     /// Each entry corresponds to the same index in `dims`. For example, if
     /// name=".ep_in.status" and dims=[4], dim_positions=[7] means the [4]
@@ -59,8 +63,17 @@ pub const Field = struct {
 
 /// A translation-unit global with its flattened fields.
 pub const Global = struct {
+    /// Variable name in the original source.
     name: []const u8,
-    dims: std.ArrayListUnmanaged(usize) = .{},
+    /// Source file path where this global is defined (owned).
+    source_file: []const u8,
+    /// Total size of the global in bytes.
+    size_bytes: u64,
+    /// Whether the global has internal linkage (static storage class).
+    is_static: bool,
+    /// Top-level array dimensions (empty for scalars).
+    dims: std.ArrayListUnmanaged(Dimension) = .{},
+    /// Flattened fields within this global.
     fields: std.ArrayListUnmanaged(Field) = .{},
 
     pub fn deinit(self: *Global, allocator: std.mem.Allocator) void {
@@ -70,5 +83,6 @@ pub const Global = struct {
         }
         self.fields.deinit(allocator);
         allocator.free(self.name);
+        allocator.free(self.source_file);
     }
 };

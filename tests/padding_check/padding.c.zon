@@ -1,5 +1,8 @@
 .{.{
     .name = "astruct",
+    .source_file = "tests/padding_check/padding.c",
+    .size_bytes = 8,
+    .is_static = false,
     .dims = .{ .items = .{}, .capacity = 0 },
     .fields = .{ .items = .{
         .{
@@ -16,7 +19,7 @@
         .{
             .name = ".b",
             .pad_container = null,
-            .offset_bits = 0,
+            .offset_bits = 32,
             .bit_width = 16,
             .dims = .{ .items = .{}, .capacity = 0 },
             .dim_positions = .{ .items = .{}, .capacity = 0 },
@@ -27,7 +30,7 @@
         .{
             .name = ".c",
             .pad_container = null,
-            .offset_bits = 0,
+            .offset_bits = 48,
             .bit_width = 8,
             .dims = .{ .items = .{}, .capacity = 0 },
             .dim_positions = .{ .items = .{}, .capacity = 0 },

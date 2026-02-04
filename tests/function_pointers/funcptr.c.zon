@@ -1,5 +1,8 @@
 .{.{
     .name = "astruct",
+    .source_file = "tests/function_pointers/funcptr.c",
+    .size_bytes = 104,
+    .is_static = false,
     .dims = .{ .items = .{}, .capacity = 0 },
     .fields = .{ .items = .{
         .{
@@ -27,9 +30,9 @@
         .{
             .name = ".methods",
             .pad_container = null,
-            .offset_bits = 0,
+            .offset_bits = 64,
             .bit_width = 64,
-            .dims = .{ .items = .{12}, .capacity = 16 },
+            .dims = .{ .items = .{.{ .len = 12, .stride_bytes = 8 }}, .capacity = 8 },
             .dim_positions = .{ .items = .{8}, .capacity = 16 },
             .is_padding = false,
             .domain = .top,

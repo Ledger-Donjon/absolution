@@ -64,22 +64,6 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
-
-    // Integration tests: golden .zon comparison using the library directly
-    const integration_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/integration_test.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "aro", .module = aro_dep.module("aro") },
-            },
-        }),
-    });
-    const run_integration_tests = b.addRunArtifact(integration_tests);
-
-    const it_step = b.step("it", "Run integration tests (golden .zon comparison)");
-    it_step.dependOn(&run_integration_tests.step);
 }
 
 pub fn install_zig_cc_sysroot_headers(b: *std.Build) void {

@@ -4,7 +4,7 @@
 # container beforehand
 FROM registry.opensuse.org/opensuse/tumbleweed:latest
 
-RUN zypper in --no-recommends -y busybox-netcat findutils gawk git lldb &&\
+RUN zypper in --no-recommends -y binutils busybox-netcat findutils gawk git lldb rizin &&\
     zypper clean --all &&\
     useradd code
 

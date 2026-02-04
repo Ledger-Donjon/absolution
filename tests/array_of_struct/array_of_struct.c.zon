@@ -1,5 +1,8 @@
 .{.{
     .name = "g_data",
+    .source_file = "tests/array_of_struct/array_of_struct.c",
+    .size_bytes = 40,
+    .is_static = false,
     .dims = .{ .items = .{}, .capacity = 0 },
     .fields = .{ .items = .{
         .{
@@ -16,9 +19,9 @@
         .{
             .name = ".items.x",
             .pad_container = null,
-            .offset_bits = 0,
+            .offset_bits = 32,
             .bit_width = 32,
-            .dims = .{ .items = .{4}, .capacity = 16 },
+            .dims = .{ .items = .{.{ .len = 4, .stride_bytes = 8 }}, .capacity = 8 },
             .dim_positions = .{ .items = .{6}, .capacity = 16 },
             .is_padding = false,
             .domain = .top,
@@ -27,9 +30,9 @@
         .{
             .name = ".items.y",
             .pad_container = null,
-            .offset_bits = 0,
+            .offset_bits = 64,
             .bit_width = 16,
-            .dims = .{ .items = .{4}, .capacity = 16 },
+            .dims = .{ .items = .{.{ .len = 4, .stride_bytes = 8 }}, .capacity = 8 },
             .dim_positions = .{ .items = .{6}, .capacity = 16 },
             .is_padding = false,
             .domain = .top,
@@ -38,9 +41,9 @@
         .{
             .name = ".items_pad0",
             .pad_container = ".items",
-            .offset_bits = 48,
+            .offset_bits = 80,
             .bit_width = 16,
-            .dims = .{ .items = .{4}, .capacity = 16 },
+            .dims = .{ .items = .{.{ .len = 4, .stride_bytes = 8 }}, .capacity = 8 },
             .dim_positions = .{ .items = .{6}, .capacity = 16 },
             .is_padding = true,
             .domain = .top,
@@ -49,9 +52,9 @@
         .{
             .name = ".tag",
             .pad_container = null,
-            .offset_bits = 0,
+            .offset_bits = 288,
             .bit_width = 8,
-            .dims = .{ .items = .{}, .capacity = 16 },
+            .dims = .{ .items = .{}, .capacity = 8 },
             .dim_positions = .{ .items = .{}, .capacity = 16 },
             .is_padding = false,
             .domain = .top,
@@ -62,7 +65,7 @@
             .pad_container = ".",
             .offset_bits = 296,
             .bit_width = 24,
-            .dims = .{ .items = .{}, .capacity = 16 },
+            .dims = .{ .items = .{}, .capacity = 8 },
             .dim_positions = .{ .items = .{}, .capacity = 16 },
             .is_padding = true,
             .domain = .top,

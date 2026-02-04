@@ -1,6 +1,9 @@
 .{
     .{
         .name = "mutable_bitfield_global",
+        .source_file = "tests/bitfield_const/bitfield.c",
+        .size_bytes = 8,
+        .is_static = false,
         .dims = .{ .items = .{}, .capacity = 0 },
         .fields = .{ .items = .{
             .{
@@ -28,7 +31,7 @@
             .{
                 .name = ".another_regular",
                 .pad_container = null,
-                .offset_bits = 0,
+                .offset_bits = 48,
                 .bit_width = 16,
                 .dims = .{ .items = .{}, .capacity = 0 },
                 .dim_positions = .{ .items = .{}, .capacity = 0 },
@@ -40,7 +43,10 @@
     },
     .{
         .name = "mutable_array",
-        .dims = .{ .items = .{2}, .capacity = 16 },
+        .source_file = "tests/bitfield_const/bitfield.c",
+        .size_bytes = 16,
+        .is_static = false,
+        .dims = .{ .items = .{.{ .len = 2, .stride_bytes = 8 }}, .capacity = 8 },
         .fields = .{ .items = .{ .{
             .name = ".x",
             .pad_container = null,
@@ -54,7 +60,7 @@
         }, .{
             .name = ".y",
             .pad_container = null,
-            .offset_bits = 0,
+            .offset_bits = 32,
             .bit_width = 32,
             .dims = .{ .items = .{}, .capacity = 0 },
             .dim_positions = .{ .items = .{}, .capacity = 0 },
@@ -65,6 +71,9 @@
     },
     .{
         .name = "mutable_scalar",
+        .source_file = "tests/bitfield_const/bitfield.c",
+        .size_bytes = 4,
+        .is_static = false,
         .dims = .{ .items = .{}, .capacity = 0 },
         .fields = .{ .items = .{.{
             .name = ".",

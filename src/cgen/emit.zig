@@ -1,5 +1,6 @@
 const std = @import("std");
 const Parser = @import("../Parser.zig");
+const Tree = @import("tree.zig");
 
 fn writeIndent(file: *std.fs.File, depth: usize) !void {
     for (0..depth) |_| try file.writeAll("    ");
@@ -16,10 +17,9 @@ fn emitMemset(file: *std.fs.File, depth: usize, dst: []const u8, value: []const 
     try file.writeAll(");\n");
 }
 
-fn emitMemcpy(file: *std.fs.File, depth: usize, dst_prefix: []const u8, dst: []const u8, src: []const u8, size: []const u8) !void {
+fn emitMemcpy(file: *std.fs.File, depth: usize, dst: []const u8, src: []const u8, size: []const u8) !void {
     try writeIndent(file, depth);
     try file.writeAll("memcpy(");
-    try file.writeAll(dst_prefix);
     try file.writeAll(dst);
     try file.writeAll(", ");
     try file.writeAll(src);
@@ -50,13 +50,13 @@ const LoopStack = struct {
     }
 
     /// Open a loop for a dimension.
-    fn openLoop(self: *LoopStack, dim: usize, index: usize) !void {
+    fn openLoop(self: *LoopStack, dim: Tree.Dimension, index: usize) !void {
         try writeIndent(self.file, self.current_depth);
         var buf: [128]u8 = undefined;
         const line = try std.fmt.bufPrint(
             &buf,
             "for (size_t i{d} = 0; i{d} < {d}; i{d}++) {{\n",
-            .{ index, index, dim, index },
+            .{ index, index, dim.len, index },
         );
         try self.file.writeAll(line);
         self.current_depth += 1;
@@ -78,60 +78,43 @@ const LoopStack = struct {
     }
 };
 
-/// Build a C field expression with all necessary indices interleaved at correct positions.
-/// Returns an owned slice that must be freed by the caller.
-///
-/// The dim_positions slice indicates where in field_path each dimension's index should be inserted.
-/// For example, if field_path=".ep_in.status", dims=[4], dim_positions=[7], then we produce:
-/// ".ep_in[i0].status" (index inserted at byte offset 7, after ".ep_in").
-fn buildFieldExpression(
+fn mangleName(allocator: std.mem.Allocator, path: []const u8, symbol: []const u8) ![]const u8 {
+    // Sanitize path: replace non-alphanumeric with _
+    const sanitized = try allocator.dupe(u8, path);
+    defer allocator.free(sanitized);
+    for (sanitized) |*c| {
+        if (!std.ascii.isAlphanumeric(c.*)) {
+            c.* = '_';
+        }
+    }
+    return std.fmt.allocPrint(allocator, "{s}_{s}", .{ sanitized, symbol });
+}
+
+/// Generate offset calculation string: "base + i0*s0 + i1*s1 + ..."
+fn emitOffsetCalc(
     allocator: std.mem.Allocator,
-    global_name: []const u8,
-    global_dims_len: usize,
-    field_path: []const u8,
-    field_dims: []const usize,
-    field_dim_positions: []const usize,
-    start_index: usize,
+    global_dims: []const Tree.Dimension,
+    field_dims: []const Tree.Dimension,
+    base_offset: u64,
 ) ![]const u8 {
     var buf = std.ArrayList(u8).empty;
     errdefer buf.deinit(allocator);
     const w = buf.writer(allocator);
 
-    // Emit global name with its indices (always at position 0)
-    try w.print("{s}", .{global_name});
-    for (0..global_dims_len) |i| {
-        try w.print("[i{d}]", .{i});
-    }
+    try w.print("{d}", .{base_offset});
 
-    // Handle the trivial root path case
-    if (field_path.len == 1 and field_path[0] == '.') {
-        // Still need to emit any field dimensions that have position 1 (end of root)
-        for (0..field_dims.len) |fi| {
-            try w.print("[i{d}]", .{start_index + fi});
+    // Global dims use indices i0, i1, ...
+    for (global_dims, 0..) |d, i| {
+        if (d.stride_bytes > 0) {
+            try w.print(" + i{d} * {d}", .{ i, d.stride_bytes });
         }
-        return try buf.toOwnedSlice(allocator);
     }
 
-    // Emit field path, interleaving indices at their recorded positions.
-    // We iterate through the path and insert indices when we reach their positions.
-    var path_idx: usize = 0;
-    var dim_idx: usize = 0;
-
-    while (path_idx < field_path.len) {
-        // Emit any indices that should be inserted at this position
-        while (dim_idx < field_dim_positions.len and field_dim_positions[dim_idx] == path_idx) {
-            try w.print("[i{d}]", .{start_index + dim_idx});
-            dim_idx += 1;
+    // Field dims use indices i{global_dims.len}, ...
+    for (field_dims, 0..) |d, i| {
+        if (d.stride_bytes > 0) {
+            try w.print(" + i{d} * {d}", .{ global_dims.len + i, d.stride_bytes });
         }
-        // Emit the next character of the path
-        try w.print("{c}", .{field_path[path_idx]});
-        path_idx += 1;
-    }
-
-    // Emit any remaining indices at the end of the path
-    while (dim_idx < field_dim_positions.len) {
-        try w.print("[i{d}]", .{start_index + dim_idx});
-        dim_idx += 1;
     }
 
     return try buf.toOwnedSlice(allocator);
@@ -143,25 +126,48 @@ pub fn writeFuzzerC(
     globals: []const Parser.ParsedGlobal,
     needed_bytes: usize,
     out_path: []const u8,
-    target_path: []const u8,
+    redef_path: []const u8,
 ) !void {
     var file = try std.fs.cwd().createFile(out_path, .{ .truncate = true });
     defer file.close();
+
+    var redef_file = try std.fs.cwd().createFile(redef_path, .{ .truncate = true });
+    defer redef_file.close();
+
     try file.writeAll(
         \\#include <assert.h>
         \\#include <stdint.h>
         \\#include <stddef.h>
         \\#include <string.h>
         \\#include <stdio.h>
-        \\#include "
-    );
-    try file.writeAll(target_path);
-    try file.writeAll(
-        \\"
         \\
         \\int AbsolutionTestOneInput(const uint8_t *data, size_t size);
         \\
+        \\
     );
+
+    for (globals) |g| {
+        const mangled = if (g.is_static)
+            try mangleName(allocator, g.source_file, g.name)
+        else
+            try allocator.dupe(u8, g.name);
+        defer allocator.free(mangled);
+
+        if (g.is_static) {
+            // Write redef line
+            const line = try std.fmt.allocPrint(allocator, "{s} {s} {s}\n", .{ g.source_file, g.name, mangled });
+            defer allocator.free(line);
+            try redef_file.writeAll(line);
+        }
+
+        // Write extern decl
+        // Note: we treat everything as byte array to avoid type issues in C
+        const decl = try std.fmt.allocPrint(allocator, "extern uint8_t {s}[{d}];\n", .{ mangled, g.size_bytes });
+        defer allocator.free(decl);
+        try file.writeAll(decl);
+    }
+
+    try file.writeAll("\n");
 
     try emitSampler(allocator, globals, needed_bytes, &file);
     try emitChecker(allocator, globals, &file);
@@ -189,12 +195,19 @@ fn emitSampler(allocator: std.mem.Allocator, globals: []const Parser.ParsedGloba
     for (globals) |g| {
         const global_dims_len = g.dims.items.len;
 
+        const mangled = if (g.is_static)
+            try mangleName(allocator, g.source_file, g.name)
+        else
+            try allocator.dupe(u8, g.name);
+        defer allocator.free(mangled);
+
         // Zero the entire global storage up-front so padding bytes start as 0.
         // This lets sampling ignore synthetic padding fields.
         var memset_dst_buf: [256]u8 = undefined;
         var memset_size_buf: [256]u8 = undefined;
-        const memset_dst = try std.fmt.bufPrint(&memset_dst_buf, "&{s}", .{g.name});
-        const memset_size = try std.fmt.bufPrint(&memset_size_buf, "sizeof({s})", .{g.name});
+        // Access via mangled name
+        const memset_dst = try std.fmt.bufPrint(&memset_dst_buf, "{s}", .{mangled});
+        const memset_size = try std.fmt.bufPrint(&memset_size_buf, "sizeof({s})", .{mangled});
         try emitMemset(file, 1, memset_dst, "0", memset_size);
 
         // Open global loops once per global.
@@ -216,22 +229,20 @@ fn emitSampler(allocator: std.mem.Allocator, globals: []const Parser.ParsedGloba
                 try loop_stack.openLoop(d, i);
             }
 
-            // Construct expression with indices interleaved at correct positions
-            const expr = try buildFieldExpression(
-                allocator,
-                g.name,
-                global_dims_len,
-                f.name,
-                f.dims.items,
-                f.dim_positions.items,
-                global_dims_len,
+            // Construct offset expression
+            const offset_expr = try emitOffsetCalc(allocator, g.dims.items, f.dims.items, @intCast(f.offset_bits / 8) // Byte offset
             );
-            defer allocator.free(expr);
+            defer allocator.free(offset_expr);
+
+            // Access: &mangled[offset_expr]
+            // Wait, offset_expr might be long. We should allocate.
+            const dst_expr = try std.fmt.allocPrint(allocator, "&{s}[{s}]", .{ mangled, offset_expr });
+            defer allocator.free(dst_expr);
 
             const current_depth = loop_stack.depth();
             switch (f.domain) {
                 .top => {
-                    try emitMemcpy(file, current_depth, "&", expr, "&data[off]", bytes_str);
+                    try emitMemcpy(file, current_depth, dst_expr, "&data[off]", bytes_str);
                     try incrementOffset(file, current_depth, bytes_str);
                 },
                 .values => |vals| {
@@ -263,7 +274,7 @@ fn emitSampler(allocator: std.mem.Allocator, globals: []const Parser.ParsedGloba
 
                     var src_buf: [256]u8 = undefined;
                     const src = try std.fmt.bufPrint(&src_buf, "&{s}[idx_{s} * {s}]", .{ label, label, bytes_str });
-                    try emitMemcpy(file, current_depth, "&", expr, src, bytes_str);
+                    try emitMemcpy(file, current_depth, dst_expr, src, bytes_str);
                     try incrementOffset(file, current_depth, "1");
                 },
                 .pointers => |ptrs| {
@@ -292,7 +303,7 @@ fn emitSampler(allocator: std.mem.Allocator, globals: []const Parser.ParsedGloba
 
                     var src_buf: [128]u8 = undefined;
                     const src = try std.fmt.bufPrint(&src_buf, "&{s}[idx_{s}]", .{ ptr_label, ptr_label });
-                    try emitMemcpy(file, current_depth, "&", expr, src, bytes_str);
+                    try emitMemcpy(file, current_depth, dst_expr, src, bytes_str);
                     try incrementOffset(file, current_depth, "1");
                 },
             }
@@ -310,13 +321,18 @@ fn emitSampler(allocator: std.mem.Allocator, globals: []const Parser.ParsedGloba
 
 /// Emit the checker that enforces padding bytes stay zeroed.
 fn emitChecker(allocator: std.mem.Allocator, globals: []const Parser.ParsedGlobal, file: *std.fs.File) !void {
-    var num_buf: [64]u8 = undefined;
     var bytes_buf: [64]u8 = undefined;
 
     try file.writeAll("int check_invariant(void) {\n");
 
     for (globals) |g| {
         const global_dims_len = g.dims.items.len;
+
+        const mangled = if (g.is_static)
+            try mangleName(allocator, g.source_file, g.name)
+        else
+            try allocator.dupe(u8, g.name);
+        defer allocator.free(mangled);
 
         // Open global loops once per global.
         var loop_stack = LoopStack.init(file, 1);
@@ -352,25 +368,19 @@ fn emitChecker(allocator: std.mem.Allocator, globals: []const Parser.ParsedGloba
             try file.writeAll(bytes_str);
             try file.writeAll("; i++) {\n");
             try writeIndent(file, current_depth + 1);
-            const off_bytes_str = try std.fmt.bufPrint(&num_buf, "{d}", .{f.offset_bits / 8});
-            const container_path = f.pad_container orelse f.name;
 
-            const container_expr = try buildFieldExpression(
-                allocator,
-                g.name,
-                global_dims_len,
-                container_path,
-                f.dims.items,
-                f.dim_positions.items,
-                global_dims_len,
+            // Construct offset expression
+            const offset_expr = try emitOffsetCalc(allocator, g.dims.items, f.dims.items, @intCast(f.offset_bits / 8) // Byte offset
             );
-            defer allocator.free(container_expr);
+            defer allocator.free(offset_expr);
 
-            try file.writeAll("if ((((const uint8_t *)&");
-            try file.writeAll(container_expr);
-            try file.writeAll(") + ");
-            try file.writeAll(off_bytes_str);
-            try file.writeAll(")[i] != 0) return -1;\n");
+            try file.writeAll("if (");
+            try file.writeAll(mangled);
+            try file.writeAll("[");
+            try file.writeAll(offset_expr);
+            try file.writeAll(" + i"); // offset + i
+            try file.writeAll("] != 0) return -1;\n");
+
             try writeIndent(file, current_depth);
             try file.writeAll("}\n");
 

@@ -1,5 +1,8 @@
 .{.{
     .name = "astruct",
+    .source_file = "tests/anonymous_types/anon.c",
+    .size_bytes = 72,
+    .is_static = false,
     .dims = .{ .items = .{}, .capacity = 0 },
     .fields = .{ .items = .{
         .{
@@ -16,7 +19,7 @@
         .{
             .name = ".b",
             .pad_container = null,
-            .offset_bits = 0,
+            .offset_bits = 32,
             .bit_width = 16,
             .dims = .{ .items = .{}, .capacity = 0 },
             .dim_positions = .{ .items = .{}, .capacity = 0 },
@@ -27,7 +30,7 @@
         .{
             .name = ".c",
             .pad_container = null,
-            .offset_bits = 0,
+            .offset_bits = 48,
             .bit_width = 8,
             .dims = .{ .items = .{}, .capacity = 0 },
             .dim_positions = .{ .items = .{}, .capacity = 0 },
@@ -49,7 +52,7 @@
         .{
             .name = ".d",
             .pad_container = null,
-            .offset_bits = 0,
+            .offset_bits = 64,
             .bit_width = 64,
             .dims = .{ .items = .{}, .capacity = 0 },
             .dim_positions = .{ .items = .{}, .capacity = 0 },
@@ -60,9 +63,9 @@
         .{
             .name = ".e",
             .pad_container = null,
-            .offset_bits = 0,
+            .offset_bits = 128,
             .bit_width = 32,
-            .dims = .{ .items = .{12}, .capacity = 16 },
+            .dims = .{ .items = .{.{ .len = 12, .stride_bytes = 4 }}, .capacity = 8 },
             .dim_positions = .{ .items = .{2}, .capacity = 16 },
             .is_padding = false,
             .domain = .top,
@@ -71,9 +74,9 @@
         .{
             .name = ".f",
             .pad_container = null,
-            .offset_bits = 0,
+            .offset_bits = 512,
             .bit_width = 64,
-            .dims = .{ .items = .{}, .capacity = 16 },
+            .dims = .{ .items = .{}, .capacity = 8 },
             .dim_positions = .{ .items = .{}, .capacity = 16 },
             .is_padding = false,
             .domain = .top,

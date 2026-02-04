@@ -124,9 +124,9 @@ zig build it --summary all   # Verbose integration test output
 C file → aro Preprocessor → aro Parser → AST traversal → ParsedGlobal[]
 ```
 
-- Uses `zig cc -E` for preprocessing when available (matches Zig's include resolution)
-- Falls back to aro's built-in preprocessor if `zig` is unavailable
+- Uses aro's built-in preprocessor (self-contained, no external dependencies)
 - Configures include paths from bundled libc headers in `zig-out/lib/`
+- System headers are automatically filtered via `Source.Kind` tracking
 
 ### Flattening
 
@@ -162,8 +162,10 @@ pip install pre-commit
 pre-commit install
 ```
 
-## Environment Variables
+## Self-Contained Philosophy
 
-| Variable | Description |
-|----------|-------------|
-| `FUZZMATE_ZIG` | Override the Zig executable used for preprocessing |
+Fuzzmate is completely self-contained at runtime. It uses:
+- The bundled aro library for C parsing and preprocessing
+- Bundled sysroot headers copied at build time to `zig-out/lib/`
+
+No external tools (zig, clang, gcc) are required at runtime. See `.cursor/skills/self-contained/SKILL.md` for detailed guidance.
