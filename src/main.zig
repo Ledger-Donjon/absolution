@@ -13,9 +13,9 @@ const Options = struct {
 
 const cli = clap.parseParamsComptime(
     \\-h, --help               Show this help and exit.
-    \\    --targets <str>      Path to targets C translation unit.
+    \\-t, --targets <str>      Path to targets C translation unit.
+    \\-o, --out <str>          Optional Output fuzzer C path (default: fuzzer.c).
     \\    --invariant <str>    Optional invariant (.in or .zon).
-    \\    --out <str>          Output fuzzer C path (default: fuzzer.c).
     \\    --zon <str>          Optional zon output path.
     \\    --seed <str>         Optional seed output path (default: <out>.seed).
     \\

@@ -24,6 +24,11 @@ pub const Field = struct {
     bit_width: usize,
     /// Optional array dimensions (empty when scalar).
     dims: std.ArrayListUnmanaged(usize) = .{},
+    /// Byte offsets in `name` where each dimension's index should be inserted.
+    /// Each entry corresponds to the same index in `dims`. For example, if
+    /// name=".ep_in.status" and dims=[4], dim_positions=[7] means the [4]
+    /// index goes after ".ep_in" (byte offset 7), producing ".ep_in[i].status".
+    dim_positions: std.ArrayListUnmanaged(usize) = .{},
     /// Whether this field is padding that must remain zeroed.
     is_padding: bool = false,
     /// Value domain.
@@ -35,6 +40,7 @@ pub const Field = struct {
         allocator.free(self.name);
         if (self.pad_container) |c| allocator.free(c);
         self.dims.deinit(allocator);
+        self.dim_positions.deinit(allocator);
         if (self.domain_owned) {
             switch (self.domain) {
                 .values => |vals| {

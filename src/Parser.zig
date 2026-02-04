@@ -217,6 +217,22 @@ pub fn collect_globals(p: *Parser, path: []const u8, allocator: std.mem.Allocato
     var tree = try pp.parse();
     defer tree.deinit();
 
+    // First pass: collect typedef names to filter out variables that shadow them.
+    // This prevents generating code like `memset(&my_type_t, ...)` where my_type_t
+    // is both a typedef and a variable name, which causes C compilation errors.
+    var typedef_names = std.StringHashMap(void).init(allocator);
+    defer typedef_names.deinit();
+    for (tree.root_decls.items) |idx| {
+        const node = idx.get(&tree);
+        switch (node) {
+            .typedef => |td| {
+                const name = tree.tokSlice(td.name_tok);
+                try typedef_names.put(name, {});
+            },
+            else => {},
+        }
+    }
+
     var globals = std.ArrayList(ParsedGlobal).empty;
     errdefer free_globals(allocator, &globals);
 
@@ -234,6 +250,32 @@ pub fn collect_globals(p: *Parser, path: []const u8, allocator: std.mem.Allocato
                 if (variable.qt.hasIncompleteSize(tree.comp)) continue;
 
                 const name_slice = tree.tokSlice(variable.name_tok);
+
+                // Skip variables whose name conflicts with a typedef name.
+                // This avoids generating invalid C like `memset(&type_name, ...)`
+                // where `type_name` is interpreted as a type, not a variable.
+                if (typedef_names.contains(name_slice)) continue;
+
+                // Heuristic: skip variables that look like typedef parsing artifacts.
+                // These occur when aro parses constructs like:
+                //   typedef int (*foo_t)(void) __attribute__((warn_unused_result));
+                // and incorrectly creates both a typedef and a variable named `foo_t`.
+                // We detect these by checking for:
+                // - No initializer (tentative definition)
+                // - No actual definition
+                // - Type is `int` (the fallback type for parse errors)
+                // - Name ends with `_t` (common typedef naming convention)
+                if (variable.initializer == null and variable.definition == null and
+                    !variable.qt.isInvalid())
+                {
+                    const ty = variable.qt.type(tree.comp);
+                    if (ty == .int and name_slice.len > 2 and
+                        std.mem.endsWith(u8, name_slice, "_t"))
+                    {
+                        continue;
+                    }
+                }
+
                 const copied_name = try allocator.dupe(u8, name_slice);
                 errdefer allocator.free(copied_name);
 

@@ -12,9 +12,39 @@ pub const ParsedField = cgen_tree.Field;
 
 const ParseError = std.mem.Allocator.Error;
 const Dimensions = std.ArrayListUnmanaged(usize);
+const DimPositions = std.ArrayListUnmanaged(usize);
 const Fields = std.ArrayListUnmanaged(ParsedField);
 
 const root_prefix = ".";
+
+/// Tracks array dimensions along with their positions in the field path.
+const DimStack = struct {
+    dims: Dimensions = .{},
+    positions: DimPositions = .{},
+
+    fn deinit(self: *DimStack, allocator: std.mem.Allocator) void {
+        self.dims.deinit(allocator);
+        self.positions.deinit(allocator);
+    }
+
+    fn append(self: *DimStack, allocator: std.mem.Allocator, dim: usize, position: usize) !void {
+        try self.dims.append(allocator, dim);
+        try self.positions.append(allocator, position);
+    }
+
+    fn pop(self: *DimStack) void {
+        _ = self.dims.pop();
+        _ = self.positions.pop();
+    }
+
+    fn cloneDims(self: DimStack, allocator: std.mem.Allocator) !Dimensions {
+        return try self.dims.clone(allocator);
+    }
+
+    fn clonePositions(self: DimStack, allocator: std.mem.Allocator) !DimPositions {
+        return try self.positions.clone(allocator);
+    }
+};
 
 /// Extract top-level array dimensions, returning the innermost element type and the peeled dimensions.
 pub fn peelTopLevelArrayDims(
@@ -47,11 +77,11 @@ pub fn flattenGlobal(
     qt: aro.QualType,
     fields: *Fields,
 ) ParseError!void {
-    var dims = Dimensions{};
-    defer dims.deinit(allocator);
+    var dim_stack = DimStack{};
+    defer dim_stack.deinit(allocator);
 
     var pad_index: usize = 0;
-    try flattenType(allocator, tree, qt, root_prefix, &dims, fields, &pad_index);
+    try flattenType(allocator, tree, qt, root_prefix, &dim_stack, fields, &pad_index);
 }
 
 /// Flatten any supported type (scalars, arrays, records, unions) into fields.
@@ -60,7 +90,7 @@ pub fn flattenType(
     tree: aro.Tree,
     qt: aro.QualType,
     prefix: []const u8,
-    dims: *Dimensions,
+    dim_stack: *DimStack,
     fields: *Fields,
     pad_index: *usize,
 ) ParseError!void {
@@ -69,9 +99,11 @@ pub fn flattenType(
     if (qt.get(tree.comp, .array)) |arr| {
         switch (arr.len) {
             .fixed, .static => |len| {
-                try dims.append(allocator, @intCast(len));
-                defer _ = dims.pop();
-                try flattenType(allocator, tree, arr.elem, prefix, dims, fields, pad_index);
+                // Record the dimension along with the current prefix length.
+                // This tells us where in the final path to insert the array index.
+                try dim_stack.append(allocator, @intCast(len), prefix.len);
+                defer dim_stack.pop();
+                try flattenType(allocator, tree, arr.elem, prefix, dim_stack, fields, pad_index);
                 return;
             },
             else => return,
@@ -81,7 +113,7 @@ pub fn flattenType(
     const base = qt.base(tree.comp).type;
     switch (base) {
         .@"struct" => |rec| {
-            try flattenRecord(allocator, tree, rec, prefix, dims, fields, pad_index);
+            try flattenRecord(allocator, tree, rec, prefix, dim_stack, fields, pad_index);
             return;
         },
         .@"union" => |rec| {
@@ -92,7 +124,7 @@ pub fn flattenType(
                 allocator,
                 fields,
                 prefix,
-                dims.*,
+                dim_stack.*,
                 @as(usize, @intCast(layout.size_bits)),
                 0,
                 pad_index,
@@ -110,8 +142,11 @@ pub fn flattenType(
         domain = .{ .values = &.{ "0", "1" } };
     }
 
-    var dims_info = try dims.*.clone(allocator);
+    var dims_info = try dim_stack.cloneDims(allocator);
     errdefer dims_info.deinit(allocator);
+
+    var positions_info = try dim_stack.clonePositions(allocator);
+    errdefer positions_info.deinit(allocator);
 
     const name_copy = try allocator.dupe(u8, prefix);
     errdefer allocator.free(name_copy);
@@ -120,6 +155,7 @@ pub fn flattenType(
         .name = name_copy,
         .bit_width = bits,
         .dims = dims_info,
+        .dim_positions = positions_info,
         .is_padding = false,
         .domain = domain,
     });
@@ -131,7 +167,7 @@ fn flattenRecord(
     tree: aro.Tree,
     record: aro.Type.Record,
     prefix: []const u8,
-    dims: *Dimensions,
+    dim_stack: *DimStack,
     fields: *Fields,
     pad_index: *usize,
 ) ParseError!void {
@@ -143,7 +179,7 @@ fn flattenRecord(
         const offset_bits = @as(usize, @intCast(field.layout.offset_bits));
         const size_bits = @as(usize, @intCast(field.layout.size_bits));
         if (offset_bits > current_bits) {
-            try addPadding(allocator, fields, prefix, dims.*, offset_bits - current_bits, current_bits, pad_index);
+            try addPadding(allocator, fields, prefix, dim_stack.*, offset_bits - current_bits, current_bits, pad_index);
         }
 
         var field_name = prefix;
@@ -168,7 +204,7 @@ fn flattenRecord(
             false;
 
         if (!is_bitfield) {
-            try flattenType(allocator, tree, field.qt, field_name, dims, fields, pad_index);
+            try flattenType(allocator, tree, field.qt, field_name, dim_stack, fields, pad_index);
         }
         // Bit-fields are left as unsampled storage (zeros from memset).
 
@@ -177,7 +213,7 @@ fn flattenRecord(
 
     if (layout.size_bits > current_bits) {
         const tail_bits = @as(usize, @intCast(layout.size_bits - current_bits));
-        try addPadding(allocator, fields, prefix, dims.*, tail_bits, current_bits, pad_index);
+        try addPadding(allocator, fields, prefix, dim_stack.*, tail_bits, current_bits, pad_index);
     }
 }
 
@@ -186,16 +222,19 @@ fn addPadding(
     allocator: std.mem.Allocator,
     fields: *Fields,
     prefix: []const u8,
-    dims: Dimensions,
+    dim_stack: DimStack,
     bits: usize,
     pad_offset_bits: usize,
     pad_index: *usize,
 ) ParseError!void {
     if (bits == 0) return;
     const name = try std.fmt.allocPrint(allocator, "{s}_pad{d}", .{ prefix, pad_index.* });
+    errdefer allocator.free(name);
     pad_index.* += 1;
-    var dims_copy = try dims.clone(allocator);
+    var dims_copy = try dim_stack.cloneDims(allocator);
     errdefer dims_copy.deinit(allocator);
+    var positions_copy = try dim_stack.clonePositions(allocator);
+    errdefer positions_copy.deinit(allocator);
     const container_copy = try allocator.dupe(u8, prefix);
     errdefer allocator.free(container_copy);
     try fields.append(allocator, .{
@@ -204,6 +243,7 @@ fn addPadding(
         .offset_bits = pad_offset_bits,
         .bit_width = bits,
         .dims = dims_copy,
+        .dim_positions = positions_copy,
         .is_padding = true,
         .domain = .top,
     });

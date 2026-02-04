@@ -78,29 +78,60 @@ const LoopStack = struct {
     }
 };
 
-/// Build a C field expression with all necessary indices.
+/// Build a C field expression with all necessary indices interleaved at correct positions.
 /// Returns an owned slice that must be freed by the caller.
+///
+/// The dim_positions slice indicates where in field_path each dimension's index should be inserted.
+/// For example, if field_path=".ep_in.status", dims=[4], dim_positions=[7], then we produce:
+/// ".ep_in[i0].status" (index inserted at byte offset 7, after ".ep_in").
 fn buildFieldExpression(
     allocator: std.mem.Allocator,
     global_name: []const u8,
     global_dims_len: usize,
     field_path: []const u8,
-    field_dims_len: usize,
+    field_dims: []const usize,
+    field_dim_positions: []const usize,
     start_index: usize,
 ) ![]const u8 {
     var buf = std.ArrayList(u8).empty;
     errdefer buf.deinit(allocator);
     const w = buf.writer(allocator);
 
+    // Emit global name with its indices (always at position 0)
     try w.print("{s}", .{global_name});
     for (0..global_dims_len) |i| {
         try w.print("[i{d}]", .{i});
     }
-    if (!(field_path.len == 1 and field_path[0] == '.')) {
-        try w.print("{s}", .{field_path});
+
+    // Handle the trivial root path case
+    if (field_path.len == 1 and field_path[0] == '.') {
+        // Still need to emit any field dimensions that have position 1 (end of root)
+        for (0..field_dims.len) |fi| {
+            try w.print("[i{d}]", .{start_index + fi});
+        }
+        return try buf.toOwnedSlice(allocator);
     }
-    for (0..field_dims_len) |fi| {
-        try w.print("[i{d}]", .{start_index + fi});
+
+    // Emit field path, interleaving indices at their recorded positions.
+    // We iterate through the path and insert indices when we reach their positions.
+    var path_idx: usize = 0;
+    var dim_idx: usize = 0;
+
+    while (path_idx < field_path.len) {
+        // Emit any indices that should be inserted at this position
+        while (dim_idx < field_dim_positions.len and field_dim_positions[dim_idx] == path_idx) {
+            try w.print("[i{d}]", .{start_index + dim_idx});
+            dim_idx += 1;
+        }
+        // Emit the next character of the path
+        try w.print("{c}", .{field_path[path_idx]});
+        path_idx += 1;
+    }
+
+    // Emit any remaining indices at the end of the path
+    while (dim_idx < field_dim_positions.len) {
+        try w.print("[i{d}]", .{start_index + dim_idx});
+        dim_idx += 1;
     }
 
     return try buf.toOwnedSlice(allocator);
@@ -185,13 +216,14 @@ fn emitSampler(allocator: std.mem.Allocator, globals: []const Parser.ParsedGloba
                 try loop_stack.openLoop(d, i);
             }
 
-            // Construct expression with indices: g[i0][i1]... .field[iN]...
+            // Construct expression with indices interleaved at correct positions
             const expr = try buildFieldExpression(
                 allocator,
                 g.name,
                 global_dims_len,
                 f.name,
-                field_dims_len,
+                f.dims.items,
+                f.dim_positions.items,
                 global_dims_len,
             );
             defer allocator.free(expr);
@@ -328,7 +360,8 @@ fn emitChecker(allocator: std.mem.Allocator, globals: []const Parser.ParsedGloba
                 g.name,
                 global_dims_len,
                 container_path,
-                field_dims_len,
+                f.dims.items,
+                f.dim_positions.items,
                 global_dims_len,
             );
             defer allocator.free(container_expr);
