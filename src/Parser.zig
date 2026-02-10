@@ -32,6 +32,7 @@ comp: aro.Compilation,
 driver: aro.Driver,
 toolchain: aro.Toolchain,
 builtin_source: aro.Source,
+compat_source: aro.Source,
 initialized: bool = false,
 
 /// Initialize the parser, discover the toolchain, and prime diagnostics.
@@ -54,6 +55,7 @@ pub fn init(allocator: std.mem.Allocator, arena: std.mem.Allocator) !*Parser {
         .driver = undefined,
         .toolchain = undefined,
         .builtin_source = undefined,
+        .compat_source = undefined,
         .initialized = false,
     };
     errdefer p.diagnostics.deinit();
@@ -89,6 +91,17 @@ pub fn init(allocator: std.mem.Allocator, arena: std.mem.Allocator) !*Parser {
     try include_paths.addZigCcImplicitIncludes(&p.comp, resource_dir_dupe);
 
     p.builtin_source = try p.driver.comp.generateBuiltinMacros(p.driver.system_defines);
+
+    // Add compatibility macros for LLVM/Clang 18+ headers.
+    // __building_module(x) is a Clang builtin that returns 0 unless building a specific
+    // Clang module. Aro doesn't support Clang modules, so we define it to always return 0.
+    // This is required for Zig 0.15.2+ which ships LLVM 18+ headers that use this macro.
+    p.compat_source = try p.driver.comp.addSourceFromBuffer("<compat>",
+        \\// Compatibility macros for LLVM/Clang 18+ headers
+        \\#define __building_module(x) 0
+        \\
+    );
+
     p.initialized = true;
 
     return p;
@@ -143,7 +156,9 @@ pub fn collect_globals(p: *Parser, path: []const u8, allocator: std.mem.Allocato
 
     var pp = try aro.Preprocessor.initDefault(p.driver.comp);
     defer pp.deinit();
-    pp.preprocessSources(&.{ source, p.builtin_source }) catch |err| {
+    // Include compat_source first to define compatibility macros (like __building_module)
+    // before builtin_source and the user source are processed.
+    pp.preprocessSources(&.{ source, p.builtin_source, p.compat_source }) catch |err| {
         // Print compilation errors
         var stdout_buf: [1024]u8 = undefined;
         var stdout = std.fs.File.stdout().writer(&stdout_buf);

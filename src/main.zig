@@ -16,10 +16,10 @@ const cli = clap.parseParamsComptime(
     \\-h, --help               Show this help and exit.
     \\-t, --targets <str>...   Path to targets C translation unit(s).
     \\-o, --out <str>          Optional Output fuzzer C path (default: fuzzer.c).
-    \\    --redef <str>        Required redefinition file output path.
-    \\    --invariant <str>    Optional invariant (.in or .zon).
-    \\    --zon <str>          Optional zon output path.
-    \\    --seed <str>         Optional seed output path (default: <out>.seed).
+    \\-r, --redef <str>        Required redefinition file output path.
+    \\-i, --invariant <str>    Optional invariant (.in or .zon).
+    \\-z, --zon <str>          Optional zon output path.
+    \\-s, --seed <str>         Optional seed output path (default: <out>.seed).
     \\
 );
 
