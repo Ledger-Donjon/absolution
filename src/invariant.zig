@@ -70,13 +70,13 @@ pub fn applyToGlobals(
         // Build field map for this global
         var field_map = std.StringHashMap(*Parser.ParsedField).init(allocator);
         defer field_map.deinit();
-        try field_map.ensureTotalCapacity(@intCast(target.fields.items.len));
+        try field_map.ensureTotalCapacity(@intCast(target.fields.len));
 
-        for (target.fields.items) |*mf| {
+        for (target.fields) |*mf| {
             try field_map.put(mf.name, mf);
         }
 
-        for (g.fields.items) |f| {
+        for (g.fields) |f| {
             const mf = field_map.get(f.name) orelse continue;
 
             switch (f.domain) {
@@ -121,20 +121,26 @@ test "applyToGlobals updates domains" {
     var globals = std.ArrayList(Parser.ParsedGlobal).empty;
     defer Parser.free_globals(allocator, &globals);
 
-    const field_name = try allocator.dupe(u8, ".");
-    try globals.append(allocator, .{
-        .name = try allocator.dupe(u8, "g"),
-        .fields = std.ArrayListUnmanaged(Parser.ParsedField){
-            .items = try allocator.alloc(Parser.ParsedField, 1),
-        },
-    });
-    globals.items[0].fields.items[0] = .{
-        .name = field_name,
+    const global_fields = try allocator.alloc(Parser.ParsedField, 1);
+    global_fields[0] = .{
+        .name = try allocator.dupe(u8, "."),
         .bit_width = 8,
-        .dims = .{},
         .is_padding = false,
         .domain = .top,
         .domain_owned = false,
+    };
+
+    try globals.append(allocator, .{
+        .name = try allocator.dupe(u8, "g"),
+        .fields = global_fields,
+    });
+
+    const inv_fields = try allocator.alloc(tree.Field, 1);
+    inv_fields[0] = .{
+        .name = try allocator.dupe(u8, "."),
+        .bit_width = 8,
+        .domain = .{ .values = &.{"0xAA"} },
+        .is_padding = false,
     };
 
     var inv = Invariant{
@@ -143,18 +149,9 @@ test "applyToGlobals updates domains" {
     defer inv.deinit(allocator);
     inv.globals[0] = .{
         .name = try allocator.dupe(u8, "g"),
-        .fields = .{
-            .items = try allocator.alloc(tree.Field, 1),
-        },
-    };
-    inv.globals[0].fields.items[0] = .{
-        .name = try allocator.dupe(u8, "."),
-        .bit_width = 8,
-        .dims = .{},
-        .domain = .{ .values = &.{"0xAA"} },
-        .is_padding = false,
+        .fields = inv_fields,
     };
 
     try applyToGlobals(allocator, &globals, inv);
-    try std.testing.expect(globals.items[0].fields.items[0].domain == .values);
+    try std.testing.expect(globals.items[0].fields[0].domain == .values);
 }

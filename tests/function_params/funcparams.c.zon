@@ -3,16 +3,16 @@
     .source_file = "tests/function_params/funcparams.c",
     .size_bytes = 4,
     .is_static = true,
-    .dims = .{ .items = .{}, .capacity = 0 },
-    .fields = .{ .items = .{.{
+    .dims = .{},
+    .fields = .{.{
         .name = ".",
         .pad_container = null,
         .offset_bits = 0,
         .bit_width = 32,
-        .dims = .{ .items = .{}, .capacity = 0 },
-        .dim_positions = .{ .items = .{}, .capacity = 0 },
+        .dims = .{},
+        .dim_positions = .{},
         .is_padding = false,
         .domain = .top,
         .domain_owned = false,
-    }}, .capacity = 1 },
+    }},
 }}

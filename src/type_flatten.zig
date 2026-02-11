@@ -37,12 +37,12 @@ const DimStack = struct {
         _ = self.positions.pop();
     }
 
-    fn cloneDims(self: DimStack, allocator: std.mem.Allocator) !Dimensions {
-        return try self.dims.clone(allocator);
+    fn cloneDims(self: DimStack, allocator: std.mem.Allocator) ![]const cgen_tree.Dimension {
+        return try allocator.dupe(cgen_tree.Dimension, self.dims.items);
     }
 
-    fn clonePositions(self: DimStack, allocator: std.mem.Allocator) !DimPositions {
-        return try self.positions.clone(allocator);
+    fn clonePositions(self: DimStack, allocator: std.mem.Allocator) ![]const usize {
+        return try allocator.dupe(usize, self.positions.items);
     }
 };
 
@@ -51,7 +51,7 @@ pub fn peelTopLevelArrayDims(
     allocator: std.mem.Allocator,
     tree: aro.Tree,
     qt: aro.QualType,
-) ParseError!struct { qt: aro.QualType, dims: Dimensions } {
+) ParseError!struct { qt: aro.QualType, dims: []const cgen_tree.Dimension } {
     var dims_list = Dimensions{};
     errdefer dims_list.deinit(allocator);
     var current = qt;
@@ -67,7 +67,7 @@ pub fn peelTopLevelArrayDims(
         }
     }
 
-    return .{ .qt = current, .dims = dims_list };
+    return .{ .qt = current, .dims = try dims_list.toOwnedSlice(allocator) };
 }
 
 /// Flatten a type starting from a global variable.
@@ -145,11 +145,11 @@ pub fn flattenType(
         domain = .{ .values = &.{ "0", "1" } };
     }
 
-    var dims_info = try dim_stack.cloneDims(allocator);
-    errdefer dims_info.deinit(allocator);
+    const dims_info = try dim_stack.cloneDims(allocator);
+    errdefer allocator.free(dims_info);
 
-    var positions_info = try dim_stack.clonePositions(allocator);
-    errdefer positions_info.deinit(allocator);
+    const positions_info = try dim_stack.clonePositions(allocator);
+    errdefer allocator.free(positions_info);
 
     const name_copy = try allocator.dupe(u8, prefix);
     errdefer allocator.free(name_copy);
@@ -236,10 +236,10 @@ fn addPadding(
     const name = try std.fmt.allocPrint(allocator, "{s}_pad{d}", .{ prefix, pad_index.* });
     errdefer allocator.free(name);
     pad_index.* += 1;
-    var dims_copy = try dim_stack.cloneDims(allocator);
-    errdefer dims_copy.deinit(allocator);
-    var positions_copy = try dim_stack.clonePositions(allocator);
-    errdefer positions_copy.deinit(allocator);
+    const dims_copy = try dim_stack.cloneDims(allocator);
+    errdefer allocator.free(dims_copy);
+    const positions_copy = try dim_stack.clonePositions(allocator);
+    errdefer allocator.free(positions_copy);
     const container_copy = try allocator.dupe(u8, prefix);
     errdefer allocator.free(container_copy);
     try fields.append(allocator, .{

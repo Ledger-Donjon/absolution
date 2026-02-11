@@ -119,13 +119,31 @@ Invariants constrain the domains of global fields. They're written in Zig's `.zo
 
 ### Structure
 
+Each global is serialized with its metadata, dimensions, and a flat list of
+fields:
+
 ```zig
-.{
-  .{ .name = "global_name", .dims = .{...}, .fields = .{
-    .{ .name = ".field_path", .bit_width = <bits>, .dims = .{...}, .domain = ... },
-    // ...
-  }},
-}
+.{.{
+    .name = "global_name",
+    .source_file = "path/to/source.c",
+    .size_bytes = 8,
+    .is_static = false,
+    .dims = .{},                    // slice of .{ .len, .stride_bytes }
+    .fields = .{
+        .{
+            .name = ".field_path",
+            .pad_container = null,  // non-null for padding fields
+            .offset_bits = 0,
+            .bit_width = 32,
+            .dims = .{},
+            .dim_positions = .{},
+            .is_padding = false,
+            .domain = .top,
+            .domain_owned = false,
+        },
+        // ...
+    },
+}}
 ```
 
 ### Domain types
@@ -141,21 +159,34 @@ Invariants constrain the domains of global fields. They're written in Zig's `.zo
 ```zig
 .{.{
     .name = "config",
-    .dims = .{ .items = .{}, .capacity = 0 },
-    .fields = .{ .items = .{
+    .source_file = "config.c",
+    .size_bytes = 8,
+    .is_static = false,
+    .dims = .{},
+    .fields = .{
         .{
             .name = ".value",
+            .pad_container = null,
+            .offset_bits = 0,
             .bit_width = 32,
-            .dims = .{ .items = .{}, .capacity = 0 },
-            .domain = .top,  // Full 4 bytes from fuzzer
+            .dims = .{},
+            .dim_positions = .{},
+            .is_padding = false,
+            .domain = .top,         // Full 4 bytes from fuzzer
+            .domain_owned = false,
         },
         .{
             .name = ".flags",
+            .pad_container = null,
+            .offset_bits = 32,
             .bit_width = 8,
-            .dims = .{ .items = .{}, .capacity = 0 },
+            .dims = .{},
+            .dim_positions = .{},
+            .is_padding = false,
             .domain = .{ .values = .{ "0x00", "0x01", "0x03" } },  // Only these values
+            .domain_owned = false,
         },
-    }},
+    },
 }}
 ```
 
@@ -163,23 +194,39 @@ Invariants constrain the domains of global fields. They're written in Zig's `.zo
 
 - **Scalar fields**: `.field_name`
 - **Nested structs**: `.outer.inner`
-- **Padding fields**: `._pad0`, `._pad1`, etc. (auto-generated)
+- **Padding fields**: `._pad0`, `._pad1`, etc. (auto-generated, with `.is_padding = true`)
 
 ### Array dimensions
+
+Global-level and field-level arrays are both expressed as a `.dims` slice of
+`{ .len, .stride_bytes }` entries:
 
 - **Global arrays**: Dimensions in the global's `.dims`
 - **Field arrays**: Dimensions in the field's `.dims`
 
-Example for `Config configs[10]` with `int values[5]`:
+Example for `Config configs[10]` with `int values[5]` (struct size 8 bytes):
 
 ```zig
-.{
+.{.{
     .name = "configs",
-    .dims = .{ .items = .{10}, .capacity = 16 },
-    .fields = .{ .items = .{
-        .{ .name = ".values", .bit_width = 32, .dims = .{ .items = .{5}, .capacity = 8 }, .domain = .top },
-    }},
-}
+    .source_file = "configs.c",
+    .size_bytes = 80,
+    .is_static = false,
+    .dims = .{.{ .len = 10, .stride_bytes = 8 }},
+    .fields = .{
+        .{
+            .name = ".values",
+            .pad_container = null,
+            .offset_bits = 0,
+            .bit_width = 32,
+            .dims = .{.{ .len = 5, .stride_bytes = 4 }},
+            .dim_positions = .{},
+            .is_padding = false,
+            .domain = .top,
+            .domain_owned = false,
+        },
+    },
+}}
 ```
 
 ## Generated Code

@@ -23292,7 +23292,7 @@ handler_fn_t *lookupHandler(uint8_t ins) {
 }
 
 /* Function: LLVMFuzzerTestOneInput */
-int appLLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
+int AbsolutionTestOneInput(const uint8_t *data, size_t size){
     struct {
         uint8_t io_apdu_buffer[301];
         io_seph_app_t io_app;

@@ -3,16 +3,16 @@
     .source_file = "tests/nested/nested.c",
     .size_bytes = 240,
     .is_static = false,
-    .dims = .{ .items = .{}, .capacity = 0 },
-    .fields = .{ .items = .{.{
+    .dims = .{},
+    .fields = .{.{
         .name = "._pad0",
         .pad_container = ".",
         .offset_bits = 0,
         .bit_width = 1920,
-        .dims = .{ .items = .{}, .capacity = 0 },
-        .dim_positions = .{ .items = .{}, .capacity = 0 },
+        .dims = .{},
+        .dim_positions = .{},
         .is_padding = true,
         .domain = .top,
         .domain_owned = false,
-    }}, .capacity = 1 },
+    }},
 }}

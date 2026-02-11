@@ -16,7 +16,7 @@ pub const Domain = cgen_tree.Domain;
 pub const ParsedField = cgen_tree.Field;
 pub const ParsedGlobal = cgen_tree.Global;
 
-const Fields = std.ArrayListUnmanaged(ParsedField);
+const FieldsBuilder = std.ArrayListUnmanaged(ParsedField);
 
 /// C parser built on aro, specialized for extracting global variables.
 ///
@@ -167,9 +167,7 @@ pub fn deinit(p: *Parser) void {
 }
 
 pub fn free_globals(allocator: std.mem.Allocator, globals: *std.ArrayList(ParsedGlobal)) void {
-    for (globals.items) |*g| {
-        g.deinit(allocator);
-    }
+    for (globals.items) |*g| g.deinit(allocator);
     globals.deinit(allocator);
 }
 
@@ -305,16 +303,22 @@ pub fn collect_globals(p: *Parser, path: []const u8, allocator: std.mem.Allocato
                 if (size_val == null) continue;
                 const size_bytes: u64 = @intCast(size_val.?);
 
-                var peeled = try type_flatten.peelTopLevelArrayDims(allocator, tree, variable.qt);
-                errdefer peeled.dims.deinit(allocator);
+                const peeled = try type_flatten.peelTopLevelArrayDims(allocator, tree, variable.qt);
+                errdefer allocator.free(peeled.dims);
 
-                var fields = Fields{};
+                var fields_builder = FieldsBuilder{};
                 errdefer {
-                    for (fields.items) |*f| f.deinit(allocator);
-                    fields.deinit(allocator);
+                    for (fields_builder.items) |*f| f.deinit(allocator);
+                    fields_builder.deinit(allocator);
                 }
 
-                try type_flatten.flattenGlobal(allocator, tree, peeled.qt, &fields);
+                try type_flatten.flattenGlobal(allocator, tree, peeled.qt, &fields_builder);
+
+                const fields = try fields_builder.toOwnedSlice(allocator);
+                errdefer {
+                    for (fields) |*f| f.deinit(allocator);
+                    allocator.free(fields);
+                }
 
                 try globals.append(allocator, .{
                     .name = copied_name,

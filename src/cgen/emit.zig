@@ -196,7 +196,7 @@ fn emitSampler(allocator: std.mem.Allocator, globals: []const Parser.ParsedGloba
     try file.writeAll("    if (size < needed) return -1;\n");
 
     for (globals) |g| {
-        const global_dims_len = g.dims.items.len;
+        const global_dims_len = g.dims.len;
 
         const mangled = if (g.is_static)
             try mangleName(allocator, g.source_file, g.name)
@@ -215,25 +215,25 @@ fn emitSampler(allocator: std.mem.Allocator, globals: []const Parser.ParsedGloba
 
         // Open global loops once per global.
         var loop_stack = LoopStack.init(file, 1);
-        for (g.dims.items, 0..) |d, i| {
+        for (g.dims, 0..) |d, i| {
             try loop_stack.openLoop(d, i);
         }
 
-        for (g.fields.items) |f| {
+        for (g.fields) |f| {
             if (f.is_padding) continue;
             const bytes = (f.bit_width + 7) / 8;
             const bytes_str = try std.fmt.bufPrint(&bytes_buf, "{d}", .{bytes});
 
-            const field_dims_len = f.dims.items.len;
+            const field_dims_len = f.dims.len;
 
             // Open field loops (if any) inside the global loops.
-            for (f.dims.items, 0..) |d, fi| {
+            for (f.dims, 0..) |d, fi| {
                 const i = global_dims_len + fi;
                 try loop_stack.openLoop(d, i);
             }
 
             // Construct offset expression
-            const offset_expr = try emitOffsetCalc(allocator, g.dims.items, f.dims.items, @intCast(f.offset_bits / 8) // Byte offset
+            const offset_expr = try emitOffsetCalc(allocator, g.dims, f.dims, @intCast(f.offset_bits / 8) // Byte offset
             );
             defer allocator.free(offset_expr);
 
@@ -329,7 +329,7 @@ fn emitChecker(allocator: std.mem.Allocator, globals: []const Parser.ParsedGloba
     try file.writeAll("int check_invariant(void) {\n");
 
     for (globals) |g| {
-        const global_dims_len = g.dims.items.len;
+        const global_dims_len = g.dims.len;
 
         const mangled = if (g.is_static)
             try mangleName(allocator, g.source_file, g.name)
@@ -339,19 +339,19 @@ fn emitChecker(allocator: std.mem.Allocator, globals: []const Parser.ParsedGloba
 
         // Open global loops once per global.
         var loop_stack = LoopStack.init(file, 1);
-        for (g.dims.items, 0..) |d, i| {
+        for (g.dims, 0..) |d, i| {
             try loop_stack.openLoop(d, i);
         }
 
-        for (g.fields.items) |f| {
+        for (g.fields) |f| {
             if (!f.is_padding) continue;
             const bytes = (f.bit_width + 7) / 8;
             const bytes_str = try std.fmt.bufPrint(&bytes_buf, "{d}", .{bytes});
 
-            const field_dims_len = f.dims.items.len;
+            const field_dims_len = f.dims.len;
 
             // Open field loops (if any) inside the global loops.
-            for (f.dims.items, 0..) |d, fi| {
+            for (f.dims, 0..) |d, fi| {
                 const i = global_dims_len + fi;
                 try loop_stack.openLoop(d, i);
             }
@@ -373,7 +373,7 @@ fn emitChecker(allocator: std.mem.Allocator, globals: []const Parser.ParsedGloba
             try writeIndent(file, current_depth + 1);
 
             // Construct offset expression
-            const offset_expr = try emitOffsetCalc(allocator, g.dims.items, f.dims.items, @intCast(f.offset_bits / 8) // Byte offset
+            const offset_expr = try emitOffsetCalc(allocator, g.dims, f.dims, @intCast(f.offset_bits / 8) // Byte offset
             );
             defer allocator.free(offset_expr);
 

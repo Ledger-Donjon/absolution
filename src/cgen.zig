@@ -52,10 +52,10 @@ pub fn generateFuzzer(
 fn neededBytesFromGlobals(globals: []const Builder.ParsedGlobal) usize {
     var total: usize = 0;
     for (globals) |g| {
-        const global_mult = dimsProduct(g.dims.items);
-        for (g.fields.items) |f| {
+        const global_mult = dimsProduct(g.dims);
+        for (g.fields) |f| {
             if (f.is_padding) continue;
-            const field_mult = dimsProduct(f.dims.items);
+            const field_mult = dimsProduct(f.dims);
             const bytes: usize = switch (f.domain) {
                 .top => (f.bit_width + 7) / 8,
                 .values, .pointers => 1,
