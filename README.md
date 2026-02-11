@@ -46,6 +46,31 @@ mkdir -p corpus && cp fuzzer.seed corpus/
 ./fuzzer corpus/
 ```
 
+## CMake integration
+
+Fuzzmate ships CMake modules for `find_package(Fuzzmate)`. After installing,
+add fuzzing to an existing CMake project with a single function call:
+
+```cmake
+find_package(Fuzzmate REQUIRED)
+
+fuzzmate_add_fuzzer(
+    NAME fuzz_my_target
+    TARGETS src/module_a.c src/module_b.c
+    HARNESS fuzz/my_harness.c
+    ENTRY MyTestOneInput
+    INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/include"
+    COMPILE_DEFINITIONS MY_DEFINE=42
+)
+```
+
+This creates a CMake target that handles the full pipeline: run fuzzmate,
+compile objects, apply `objcopy` symbol redefinitions, and link the final fuzzer
+binary with sanitizers.
+
+See **[example/protocol_parser/](example/protocol_parser/)** for a complete
+working example with multiple translation units.
+
 ## Testing
 
 ```bash
@@ -57,3 +82,4 @@ zig build it      # Run integration tests (golden .zon comparison)
 
 - **[USAGE.md](USAGE.md)** — Detailed usage guide with examples and behavior reference
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — Code organization and development workflow
+- **[example/protocol_parser/](example/protocol_parser/)** — Complete CMake integration example

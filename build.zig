@@ -37,6 +37,7 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(exe);
     install_zig_cc_sysroot_headers(b);
+    install_cmake_modules(b);
 
     const run_step = b.step("run", "Run the app");
 
@@ -64,6 +65,16 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
+}
+
+/// Install CMake package files so that `find_package(Fuzzmate)` works after
+/// `zig build` installs to a prefix.  Files land in `lib/cmake/Fuzzmate/`.
+pub fn install_cmake_modules(b: *std.Build) void {
+    b.installDirectory(.{
+        .source_dir = b.path("cmake"),
+        .install_dir = .prefix,
+        .install_subdir = "lib/cmake/Fuzzmate",
+    });
 }
 
 pub fn install_zig_cc_sysroot_headers(b: *std.Build) void {
