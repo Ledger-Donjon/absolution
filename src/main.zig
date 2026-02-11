@@ -10,6 +10,9 @@ const Options = struct {
     out_c: []const u8,
     zon: ?[]const u8,
     seed: ?[]const u8,
+    entry: []const u8,
+    include_dirs: []const []const u8,
+    defines: []const []const u8,
 };
 
 const cli = clap.parseParamsComptime(
@@ -20,6 +23,9 @@ const cli = clap.parseParamsComptime(
     \\-i, --invariant <str>    Optional invariant (.in or .zon).
     \\-z, --zon <str>          Optional zon output path.
     \\-s, --seed <str>         Optional seed output path (default: <out>.seed).
+    \\-e, --entry <str>        Optional harness function name (default: AbsolutionTestOneInput).
+    \\-I, --include <str>...   Additional include directories for C parsing.
+    \\-D, --define <str>...    Preprocessor defines (NAME or NAME=VALUE).
     \\
 );
 
@@ -71,6 +77,7 @@ fn parseArgs(allocator: std.mem.Allocator) !Options {
     }
 
     var targets_list = std.ArrayList([]const u8).empty;
+    errdefer targets_list.deinit(allocator);
     // defer targets_list.deinit(allocator); // We call toOwnedSlice later
     // Collect targets from -t arguments
     for (res.args.targets) |t| {
@@ -89,6 +96,19 @@ fn parseArgs(allocator: std.mem.Allocator) !Options {
     const out_c_path = res.args.out orelse "fuzzer.c";
     const zon_path = res.args.zon;
     const seed_path = res.args.seed orelse "fuzzer.seed";
+    const entry_name = res.args.entry orelse "AbsolutionTestOneInput";
+
+    var include_list = std.ArrayList([]const u8).empty;
+    errdefer include_list.deinit(allocator);
+    for (res.args.include) |inc| {
+        try include_list.append(allocator, inc);
+    }
+
+    var define_list = std.ArrayList([]const u8).empty;
+    errdefer define_list.deinit(allocator);
+    for (res.args.define) |def| {
+        try define_list.append(allocator, def);
+    }
 
     return .{
         .targets = try targets_list.toOwnedSlice(allocator),
@@ -97,6 +117,9 @@ fn parseArgs(allocator: std.mem.Allocator) !Options {
         .out_c = out_c_path,
         .zon = zon_path,
         .seed = seed_path,
+        .entry = entry_name,
+        .include_dirs = try include_list.toOwnedSlice(allocator),
+        .defines = try define_list.toOwnedSlice(allocator),
     };
 }
 
@@ -112,9 +135,21 @@ pub fn main() !void {
     // Get user options
     const opts = parseArgs(allocator) catch return;
     defer allocator.free(opts.targets);
+    defer allocator.free(opts.include_dirs);
+    defer allocator.free(opts.defines);
 
     const parser = try fuzzmate.Parser.init(allocator, arena.allocator());
     defer parser.deinit();
+
+    // Register user-provided include directories for C parsing.
+    for (opts.include_dirs) |inc| {
+        try parser.addIncludeDir(inc);
+    }
+
+    // Register user-provided preprocessor defines for C parsing.
+    for (opts.defines) |def| {
+        try parser.addDefine(def);
+    }
 
     var globals = std.ArrayList(fuzzmate.Parser.ParsedGlobal).empty;
     defer fuzzmate.Parser.free_globals(allocator, &globals);
@@ -138,6 +173,7 @@ pub fn main() !void {
         opts.out_c,
         opts.zon,
         inv,
+        opts.entry,
     );
 
     if (opts.seed) |seed_output| {

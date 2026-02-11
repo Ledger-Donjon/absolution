@@ -33,6 +33,12 @@ driver: aro.Driver,
 toolchain: aro.Toolchain,
 builtin_source: aro.Source,
 compat_source: aro.Source,
+/// User -D define text accumulated as `#define` lines, matching aro's Driver
+/// pattern.  Converted to a source via `addSourceFromOwnedBuffer` before the
+/// first call to `collect_globals`.
+macro_buf: std.ArrayList(u8) = .empty,
+/// Lazily-built source from `macro_buf`; null until the first parse.
+user_macro_source: ?aro.Source = null,
 initialized: bool = false,
 
 /// Initialize the parser, discover the toolchain, and prime diagnostics.
@@ -56,6 +62,8 @@ pub fn init(allocator: std.mem.Allocator, arena: std.mem.Allocator) !*Parser {
         .toolchain = undefined,
         .builtin_source = undefined,
         .compat_source = undefined,
+        .macro_buf = .empty,
+        .user_macro_source = null,
         .initialized = false,
     };
     errdefer p.diagnostics.deinit();
@@ -107,6 +115,42 @@ pub fn init(allocator: std.mem.Allocator, arena: std.mem.Allocator) !*Parser {
     return p;
 }
 
+/// Add a user include directory (-I) for C header resolution.
+/// These are searched before system include directories.
+pub fn addIncludeDir(p: *Parser, path: []const u8) !void {
+    try p.comp.include_dirs.append(p.allocator, try p.comp.arena.dupe(u8, path));
+}
+
+/// Add a preprocessor define (-D).
+/// Accepts "NAME" (defined as 1) or "NAME=VALUE", matching aro's Driver
+/// convention.  Must be called before the first `collect_globals`.
+pub fn addDefine(p: *Parser, def: []const u8) !void {
+    const w = p.macro_buf.writer(p.allocator);
+    if (std.mem.indexOfScalar(u8, def, '=')) |eq| {
+        try w.print("#define {s} {s}\n", .{ def[0..eq], def[eq + 1 ..] });
+    } else {
+        try w.print("#define {s} 1\n", .{def});
+    }
+}
+
+/// Convert the accumulated `macro_buf` into an aro Source.
+/// Returns the cached source on subsequent calls, or null when no defines
+/// were registered.  Mirrors aro's Driver pattern (`addSourceFromOwnedBuffer`).
+fn resolveUserMacros(p: *Parser) !?aro.Source {
+    if (p.user_macro_source) |s| return s;
+    if (p.macro_buf.items.len == 0) return null;
+
+    const contents = try p.macro_buf.toOwnedSlice(p.allocator);
+    errdefer p.allocator.free(contents);
+
+    p.user_macro_source = try p.comp.addSourceFromOwnedBuffer(
+        "<command line>",
+        contents,
+        .user,
+    );
+    return p.user_macro_source;
+}
+
 /// Tear down toolchain state and diagnostics if previously initialized.
 /// Safe to call exactly once per `init`.
 pub fn deinit(p: *Parser) void {
@@ -114,6 +158,7 @@ pub fn deinit(p: *Parser) void {
         p.toolchain.deinit();
         p.driver.deinit();
     }
+    p.macro_buf.deinit(p.allocator);
     p.comp.deinit();
     p.diagnostics.deinit();
 
@@ -154,11 +199,18 @@ pub fn collect_globals(p: *Parser, path: []const u8, allocator: std.mem.Allocato
     // using the bundled sysroot headers configured in init().
     const source = try p.driver.comp.addSourceFromPath(path);
 
+    // Materialise user -D defines into an aro source (once, on first parse).
+    const user_macros = try p.resolveUserMacros();
+
     var pp = try aro.Preprocessor.initDefault(p.driver.comp);
     defer pp.deinit();
-    // Include compat_source first to define compatibility macros (like __building_module)
-    // before builtin_source and the user source are processed.
-    pp.preprocessSources(&.{ source, p.builtin_source, p.compat_source }) catch |err| {
+    // Include compat_source and user defines before builtin_source and the
+    // user source so that all macros are visible during preprocessing.
+    const sources = if (user_macros) |um|
+        &[_]aro.Source{ source, p.builtin_source, p.compat_source, um }
+    else
+        &[_]aro.Source{ source, p.builtin_source, p.compat_source };
+    pp.preprocessSources(sources) catch |err| {
         // Print compilation errors
         var stdout_buf: [1024]u8 = undefined;
         var stdout = std.fs.File.stdout().writer(&stdout_buf);

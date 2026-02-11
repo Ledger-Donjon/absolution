@@ -7,7 +7,7 @@ This guide covers the full workflow for using fuzzmate to fuzz C programs with i
 Fuzzmate generates a libFuzzer harness that:
 
 1. **Samples** global state from fuzzer input (respecting domain constraints)
-2. **Calls** your test harness function `AbsolutionTestOneInput`
+2. **Calls** your test harness function (configurable with `--entry`)
 3. **Checks** that padding bytes remain zeroed (invariant enforcement)
 
 ## CLI Reference
@@ -16,18 +16,16 @@ Fuzzmate generates a libFuzzer harness that:
 fuzzmate [OPTIONS]
 
 OPTIONS:
-  --targets <path>    (required) C translation unit with globals to sample.
-                      This path is included verbatim via #include "...".
-
-  --out <path>        Output C path (default: fuzzer.c)
-
-  --seed <path>       Seed file path (default: fuzzer.seed)
-
-  --zon <path>        Export parsed module to .zon format
-
-  --invariant <path>  Apply .zon invariant before emission
-
-  -h, --help          Show help and exit
+  -t, --targets <str>...   (required) C translation unit(s) with globals to sample.
+  -r, --redef <str>        (required) Output path for symbol redefinition file.
+  -o, --out <str>          Output C path (default: fuzzer.c).
+  -s, --seed <str>         Seed file path (default: fuzzer.seed).
+  -e, --entry <str>        Harness function name (default: AbsolutionTestOneInput).
+  -z, --zon <str>          Export parsed module to .zon format.
+  -i, --invariant <str>    Apply .zon invariant before emission.
+  -I, --include <str>...   Additional include directories for C parsing.
+  -D, --define <str>...    Preprocessor defines (NAME or NAME=VALUE).
+  -h, --help               Show help and exit.
 ```
 
 ## Workflow
@@ -54,13 +52,14 @@ void process_config(void) {
 
 ### Step 2: Create your harness
 
-The harness must define `AbsolutionTestOneInput`:
+The harness defines a function that exercises your code. By default fuzzmate
+expects `AbsolutionTestOneInput`, but you can choose any name with `--entry`:
 
 ```c
 // harness.c
 #include "targets.c"
 
-int AbsolutionTestOneInput(const uint8_t *data, size_t size) {
+int MyTestOneInput(const uint8_t *data, size_t size) {
     process_config();
     return 0;  // Return -1 to skip post-call invariant check
 }
@@ -69,25 +68,45 @@ int AbsolutionTestOneInput(const uint8_t *data, size_t size) {
 ### Step 3: Generate the fuzzer
 
 ```bash
-zig-out/bin/fuzzmate \
-  --targets targets.c \
+./zig-out/bin/fuzzmate \
+  -t targets.c \
   --out fuzzer.c \
+  --redef fuzzer.redef \
   --seed fuzzer.seed \
+  --entry MyTestOneInput \
   --zon module.zon  # Optional: export parsed structure
 ```
 
-### Step 4: Build and run
+If your targets need include paths or preprocessor defines:
 
 ```bash
-# With clang
-clang -std=c23 -fsanitize=fuzzer,address fuzzer.c -o fuzzer
+./zig-out/bin/fuzzmate \
+  -t src/module_a.c -t src/module_b.c \
+  -I include/ \
+  -D MAX_ITEMS=64 \
+  --out fuzzer.c \
+  --redef fuzzer.redef \
+  --entry MyTestOneInput
+```
 
-# Or with zig
-zig cc -std=c23 -fsanitize=fuzzer fuzzer.c -o fuzzer
+### Step 4: Apply symbol redefinitions and build
 
-# Seed the corpus and run
-mkdir -p corpus
-cp fuzzer.seed corpus/
+When targets contain `static` globals, fuzzmate generates a `.redef` file
+with symbol renames. Apply them with `objcopy` before linking:
+
+```bash
+# Compile targets
+clang -g -c targets.c -o targets.o
+
+# Apply redefinitions (if any static globals)
+while read -r file old new; do
+  objcopy --redefine-sym ${old}=${new} ${file}.o
+  objcopy --globalize-symbol ${new} ${file}.o
+done < fuzzer.redef
+
+# Link and run
+clang -g -fsanitize=fuzzer,address fuzzer.c harness.c targets.o -o fuzzer
+mkdir -p corpus && cp fuzzer.seed corpus/
 ./fuzzer corpus/
 ```
 
@@ -181,7 +200,8 @@ Asserts padding bytes remain zeroed:
 
 LibFuzzer entrypoint that:
 1. Calls `sample_invariant` to set up state
-2. Calls your `AbsolutionTestOneInput` with remaining bytes
+2. Calls your harness function (default `AbsolutionTestOneInput`, or the name
+   given to `--entry`) with remaining bytes
 3. Calls `check_invariant` unless harness returned `-1`
 
 ## Tips
@@ -190,12 +210,12 @@ LibFuzzer entrypoint that:
 
 ```bash
 # Generate with auto-detected domains
-fuzzmate --targets targets.c --zon module.zon --out fuzzer.c
+./zig-out/bin/fuzzmate -t targets.c --zon module.zon --out fuzzer.c --redef fuzzer.redef
 
 # Edit module.zon to constrain domains...
 
 # Regenerate with constraints applied
-fuzzmate --targets targets.c --invariant module.zon --out fuzzer.c
+./zig-out/bin/fuzzmate -t targets.c --invariant module.zon --out fuzzer.c --redef fuzzer.redef
 ```
 
 ### Pointer domain validation
@@ -204,7 +224,7 @@ When using `.pointers` domains, fuzzmate validates that all referenced symbols e
 
 ### Skipping invariant checks
 
-Return `-1` from `AbsolutionTestOneInput` to skip the post-call invariant check. Useful for:
+Return `-1` from your harness function to skip the post-call invariant check. Useful for:
 - Functions that legitimately modify padding
 - Early exit paths that don't complete normally
 

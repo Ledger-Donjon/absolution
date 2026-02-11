@@ -5,3 +5,4 @@ playground
 legacy
 *fuzzer.c
 *fuzzer.o
+*fuzzer.seed

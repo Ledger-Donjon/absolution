@@ -127,6 +127,7 @@ pub fn writeFuzzerC(
     needed_bytes: usize,
     out_path: []const u8,
     redef_path: []const u8,
+    entry_name: []const u8,
 ) !void {
     var file = try std.fs.cwd().createFile(out_path, .{ .truncate = true });
     defer file.close();
@@ -141,10 +142,12 @@ pub fn writeFuzzerC(
         \\#include <string.h>
         \\#include <stdio.h>
         \\
-        \\int AbsolutionTestOneInput(const uint8_t *data, size_t size);
-        \\
-        \\
     );
+
+    // Write the forward declaration for the user's harness function.
+    const fwd_decl = try std.fmt.allocPrint(allocator, "int {s}(const uint8_t *data, size_t size);\n\n", .{entry_name});
+    defer allocator.free(fwd_decl);
+    try file.writeAll(fwd_decl);
 
     for (globals) |g| {
         const mangled = if (g.is_static)
@@ -171,7 +174,7 @@ pub fn writeFuzzerC(
 
     try emitSampler(allocator, globals, needed_bytes, &file);
     try emitChecker(allocator, globals, &file);
-    try emitEntrypoint(&file);
+    try emitEntrypoint(allocator, &file, entry_name);
 }
 
 /// Emit the sampler that hydrates globals from fuzzer input or domains.
@@ -397,14 +400,21 @@ fn emitChecker(allocator: std.mem.Allocator, globals: []const Parser.ParsedGloba
 }
 
 /// Emit the libFuzzer entrypoint that wires sampling, harness, and checks.
-fn emitEntrypoint(file: *std.fs.File) !void {
+fn emitEntrypoint(allocator: std.mem.Allocator, file: *std.fs.File, entry_name: []const u8) !void {
     try file.writeAll(
         \\int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         \\    ptrdiff_t consumed = sample_invariant(data, size);
         \\    if (consumed < 0) return 0;
         \\    data += (size_t)consumed;
         \\    size -= (size_t)consumed;
-        \\    int res = AbsolutionTestOneInput(data, size);
+        \\
+    );
+
+    const call_line = try std.fmt.allocPrint(allocator, "    int res = {s}(data, size);\n", .{entry_name});
+    defer allocator.free(call_line);
+    try file.writeAll(call_line);
+
+    try file.writeAll(
         \\    if (res == -1) return 0;
         \\    assert(check_invariant() == 0);
         \\    return 0;

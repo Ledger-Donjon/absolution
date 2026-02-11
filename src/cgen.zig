@@ -27,6 +27,7 @@ pub fn generateFuzzer(
     out_c_path: []const u8,
     zon_path: ?[]const u8,
     inv: ?invariant.Invariant,
+    entry_name: []const u8,
 ) !usize {
     if (inv) |spec| {
         try invariant.applyToGlobals(allocator, globals, spec);
@@ -34,7 +35,7 @@ pub fn generateFuzzer(
 
     const needed_bytes = neededBytesFromGlobals(globals.items);
 
-    try Emit.writeFuzzerC(allocator, globals.items, needed_bytes, out_c_path, redef_path);
+    try Emit.writeFuzzerC(allocator, globals.items, needed_bytes, out_c_path, redef_path, entry_name);
 
     if (zon_path) |zp| {
         var aw = std.Io.Writer.Allocating.init(allocator);
