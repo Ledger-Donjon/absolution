@@ -13,7 +13,7 @@ Fuzzmate generates a libFuzzer harness that:
 ## CLI Reference
 
 ```
-fuzzmate [OPTIONS]
+fuzzmate [OPTIONS] [-- <cflags>...]
 
 OPTIONS:
   -t, --targets <str>...   (required) C translation unit(s) with globals to sample.
@@ -23,9 +23,10 @@ OPTIONS:
   -e, --entry <str>        Harness function name (default: AbsolutionTestOneInput).
   -z, --zon <str>          Export parsed module to .zon format.
   -i, --invariant <str>    Apply .zon invariant before emission.
-  -I, --include <str>...   Additional include directories for C parsing.
-  -D, --define <str>...    Preprocessor defines (NAME or NAME=VALUE).
   -h, --help               Show help and exit.
+
+POSITIONAL (after '--'):
+  C compiler flags passed directly to the parser (e.g. -I path -DFOO -fshort-enums).
 ```
 
 ## Workflow
@@ -77,16 +78,15 @@ int MyTestOneInput(const uint8_t *data, size_t size) {
   --zon module.zon  # Optional: export parsed structure
 ```
 
-If your targets need include paths or preprocessor defines:
+If your targets need include paths or preprocessor defines, pass them after `--`:
 
 ```bash
 ./zig-out/bin/fuzzmate \
   -t src/module_a.c -t src/module_b.c \
-  -I include/ \
-  -D MAX_ITEMS=64 \
   --out fuzzer.c \
   --redef fuzzer.redef \
-  --entry MyTestOneInput
+  --entry MyTestOneInput \
+  -- -I include/ -DMAX_ITEMS=64
 ```
 
 ### Step 4: Apply symbol redefinitions and build

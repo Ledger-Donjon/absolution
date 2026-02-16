@@ -11,8 +11,7 @@ const Options = struct {
     zon: ?[]const u8,
     seed: ?[]const u8,
     entry: []const u8,
-    include_dirs: []const []const u8,
-    defines: []const []const u8,
+    cflags: []const []const u8,
 };
 
 const cli = clap.parseParamsComptime(
@@ -24,8 +23,7 @@ const cli = clap.parseParamsComptime(
     \\-z, --zon <str>          Optional zon output path.
     \\-s, --seed <str>         Optional seed output path (default: <out>.seed).
     \\-e, --entry <str>        Optional harness function name (default: AbsolutionTestOneInput).
-    \\-I, --include <str>...   Additional include directories for C parsing.
-    \\-D, --define <str>...    Preprocessor defines (NAME or NAME=VALUE).
+    \\<str>...                 C compiler flags after '--' (e.g. -I path -DFOO -fshort-enums).
     \\
 );
 
@@ -98,16 +96,11 @@ fn parseArgs(allocator: std.mem.Allocator) !Options {
     const seed_path = res.args.seed orelse "fuzzer.seed";
     const entry_name = res.args.entry orelse "AbsolutionTestOneInput";
 
-    var include_list = std.ArrayList([]const u8).empty;
-    errdefer include_list.deinit(allocator);
-    for (res.args.include) |inc| {
-        try include_list.append(allocator, inc);
-    }
-
-    var define_list = std.ArrayList([]const u8).empty;
-    errdefer define_list.deinit(allocator);
-    for (res.args.define) |def| {
-        try define_list.append(allocator, def);
+    // Collect positional arguments (C compiler flags after '--')
+    var cflags_list = std.ArrayList([]const u8).empty;
+    errdefer cflags_list.deinit(allocator);
+    for (res.positionals[0]) |cflag| {
+        try cflags_list.append(allocator, cflag);
     }
 
     return .{
@@ -118,8 +111,7 @@ fn parseArgs(allocator: std.mem.Allocator) !Options {
         .zon = zon_path,
         .seed = seed_path,
         .entry = entry_name,
-        .include_dirs = try include_list.toOwnedSlice(allocator),
-        .defines = try define_list.toOwnedSlice(allocator),
+        .cflags = try cflags_list.toOwnedSlice(allocator),
     };
 }
 
@@ -135,30 +127,18 @@ pub fn main() !void {
     // Get user options
     const opts = parseArgs(allocator) catch return;
     defer allocator.free(opts.targets);
-    defer allocator.free(opts.include_dirs);
-    defer allocator.free(opts.defines);
+    defer allocator.free(opts.cflags);
 
     const parser = try fuzzmate.Parser.init(allocator, arena.allocator());
     defer parser.deinit();
 
-    // Register user-provided include directories for C parsing.
-    for (opts.include_dirs) |inc| {
-        try parser.addIncludeDir(inc);
+    // Process C compiler flags (e.g. -I, -D, -fshort-enums) via arocc's Driver.
+    if (opts.cflags.len > 0) {
+        try parser.addCFlags(opts.cflags);
     }
 
-    // Register user-provided preprocessor defines for C parsing.
-    for (opts.defines) |def| {
-        try parser.addDefine(def);
-    }
-
-    var globals = std.ArrayList(fuzzmate.Parser.ParsedGlobal).empty;
+    var globals = try parser.collect_all_globals(opts.targets, allocator);
     defer fuzzmate.Parser.free_globals(allocator, &globals);
-
-    for (opts.targets) |target_path| {
-        var file_globals = try parser.collect_globals(target_path, allocator);
-        defer file_globals.deinit(allocator); // Only deinit the list structure, items are moved
-        try globals.appendSlice(allocator, file_globals.items);
-    }
 
     var inv: ?invariant.Invariant = null;
     if (opts.invariant) |inv_path| {

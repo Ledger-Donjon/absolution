@@ -30,12 +30,11 @@ zig build
 ./zig-out/bin/fuzzmate \
   -t path/to/module_a.c \
   -t path/to/module_b.c \
-  -I path/to/include \
-  -D MY_DEFINE=42 \
   --entry MyTestOneInput \
   --out fuzzer.c \
   --redef fuzzer.redef \
-  --seed fuzzer.seed
+  --seed fuzzer.seed \
+  -- -I path/to/include -DMY_DEFINE=42
 
 # Compile targets, apply objcopy, link, and run
 clang -g -c module_a.c -o module_a.o
@@ -60,7 +59,7 @@ fuzzmate_add_fuzzer(
     HARNESS fuzz/my_harness.c
     ENTRY MyTestOneInput
     INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/include"
-    COMPILE_DEFINITIONS MY_DEFINE=42
+    COMPILE_DEFINITIONS "MY_DEFINE=42"
 )
 ```
 

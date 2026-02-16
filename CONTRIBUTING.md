@@ -100,7 +100,7 @@ zig build it --summary all   # Verbose integration test output
 3. Generate the golden `.zon` output:
    ```bash
    zig build
-   zig-out/bin/fuzzmate --targets tests/my_test/myfile.c --zon tests/my_test/myfile.c.zon
+   zig-out/bin/fuzzmate -t tests/my_test/myfile.c --zon tests/my_test/myfile.c.zon --redef /dev/null
    # Verify the output is correct
    ```
 

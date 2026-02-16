@@ -52,6 +52,11 @@ pub fn generateFuzzer(
 fn neededBytesFromGlobals(globals: []const Builder.ParsedGlobal) usize {
     var total: usize = 0;
     for (globals) |g| {
+        // Skip static variables from header files - they can't be processed
+        // by objcopy and are excluded from the generated fuzzer.
+        if (g.is_static and Emit.isHeaderFile(g.source_file)) {
+            continue;
+        }
         const global_mult = dimsProduct(g.dims);
         for (g.fields) |f| {
             if (f.is_padding) continue;

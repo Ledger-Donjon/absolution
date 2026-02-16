@@ -8,9 +8,8 @@
             .url = "https://github.com/Hejsil/zig-clap/archive/refs/tags/0.11.0.tar.gz",
             .hash = "clap-0.11.0-oBajB-HnAQDPCKYzwF7rO3qDFwRcD39Q0DALlTSz5H7e",
         },
-        .aro = .{ // latest version supporting zig 0.15.2
-            .url = "git+https://github.com/vexu/arocc.git#da0aedc2625fc16beceb641823a22ccfe58a73ff",
-            .hash = "aro-0.0.0-JSD1Qv65JwB5C9GAhiWucwo6WLgu1bLgeyW6CMF3NY1j",
+        .aro = .{ // local fork with TypeStore fix for .invalid QualType handling
+            .path = "deps/aro",
         },
     },
     .paths = .{

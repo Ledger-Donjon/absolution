@@ -31,11 +31,13 @@ diagnostics: aro.Diagnostics,
 comp: aro.Compilation,
 driver: aro.Driver,
 toolchain: aro.Toolchain,
-builtin_source: aro.Source,
+/// Lazily-generated builtin macros; null until first parse. Generated after
+/// addCFlags() so that -std= takes effect before builtin generation.
+builtin_source: ?aro.Source = null,
 compat_source: aro.Source,
-/// User -D define text accumulated as `#define` lines, matching aro's Driver
-/// pattern.  Converted to a source via `addSourceFromOwnedBuffer` before the
-/// first call to `collect_globals`.
+/// User -D/-U define text accumulated as `#define`/`#undef` lines by arocc's
+/// Driver.parseArgs().  Converted to a source via `addSourceFromOwnedBuffer`
+/// before the first call to `collect_globals`.
 macro_buf: std.ArrayList(u8) = .empty,
 /// Lazily-built source from `macro_buf`; null until the first parse.
 user_macro_source: ?aro.Source = null,
@@ -60,7 +62,7 @@ pub fn init(allocator: std.mem.Allocator, arena: std.mem.Allocator) !*Parser {
         .comp = undefined,
         .driver = undefined,
         .toolchain = undefined,
-        .builtin_source = undefined,
+        .builtin_source = null,
         .compat_source = undefined,
         .macro_buf = .empty,
         .user_macro_source = null,
@@ -74,6 +76,14 @@ pub fn init(allocator: std.mem.Allocator, arena: std.mem.Allocator) !*Parser {
     // Use clang frontend defaults (same as zig cc).
     p.comp.langopts.setEmulatedCompiler(.clang);
     p.comp.langopts.standard = .c23;
+
+    // Pre-allocate aro's generated_buf to prevent reallocation.
+    //
+    // The StringInterner stores []const u8 slices pointing into generated_buf.
+    // If generated_buf's ArrayList grows and reallocates, the old backing
+    // memory is freed, leaving the StringInterner with dangling pointers.
+    // Pre-allocating avoids this class of bugs entirely.
+    try p.comp.generated_buf.ensureTotalCapacity(allocator, 32 * 1024 * 1024);
 
     // Compute resource_dir relative to executable and store a duped copy
     const exe_path = try std.fs.selfExePathAlloc(p.allocator);
@@ -98,7 +108,8 @@ pub fn init(allocator: std.mem.Allocator, arena: std.mem.Allocator) !*Parser {
     // Configure include search order from the bundled sysroot.
     try include_paths.addZigCcImplicitIncludes(&p.comp, resource_dir_dupe);
 
-    p.builtin_source = try p.driver.comp.generateBuiltinMacros(p.driver.system_defines);
+    // Note: builtin_source is generated lazily in collect_all_globals(),
+    // after addCFlags() has been called, so -std= takes effect first.
 
     // Add compatibility macros for LLVM/Clang 18+ headers.
     // __building_module(x) is a Clang builtin that returns 0 unless building a specific
@@ -115,22 +126,21 @@ pub fn init(allocator: std.mem.Allocator, arena: std.mem.Allocator) !*Parser {
     return p;
 }
 
-/// Add a user include directory (-I) for C header resolution.
-/// These are searched before system include directories.
-pub fn addIncludeDir(p: *Parser, path: []const u8) !void {
-    try p.comp.include_dirs.append(p.allocator, try p.comp.arena.dupe(u8, path));
-}
+/// Process C compiler flags via arocc's Driver.
+/// Handles -I, -D, -f*, -std=, and other standard C compiler flags.
+/// Must be called after init() and before collect_all_globals().
+pub fn addCFlags(p: *Parser, cflags: []const []const u8) !void {
+    // Driver.parseArgs expects argv format where index 0 is the program name.
+    // Prepend a dummy program name so the flags start at index 1.
+    var args = std.ArrayList([]const u8).empty;
+    defer args.deinit(p.allocator);
+    try args.append(p.allocator, "fuzzmate");
+    try args.appendSlice(p.allocator, cflags);
 
-/// Add a preprocessor define (-D).
-/// Accepts "NAME" (defined as 1) or "NAME=VALUE", matching aro's Driver
-/// convention.  Must be called before the first `collect_globals`.
-pub fn addDefine(p: *Parser, def: []const u8) !void {
-    const w = p.macro_buf.writer(p.allocator);
-    if (std.mem.indexOfScalar(u8, def, '=')) |eq| {
-        try w.print("#define {s} {s}\n", .{ def[0..eq], def[eq + 1 ..] });
-    } else {
-        try w.print("#define {s} 1\n", .{def});
-    }
+    var stdout_buf: [0]u8 = undefined;
+    var stdout: std.Io.Writer = .fixed(&stdout_buf);
+    // Pass our macro_buf so -D/-U flags accumulate there for later use.
+    _ = try p.driver.parseArgs(&stdout, &p.macro_buf, args.items);
 }
 
 /// Convert the accumulated `macro_buf` into an aro Source.
@@ -188,42 +198,85 @@ fn isEffectivelyConst(comp: *aro.Compilation, qt: aro.QualType) bool {
     return false;
 }
 
-/// Collect non-const, user-defined globals along with their bit widths.
+/// Collect non-const, user-defined globals along with their bit widths
+/// from a single translation unit.
 ///
 /// Uses arocc's native preprocessing with the bundled sysroot headers.
 /// System headers are automatically filtered via Source.Kind tracking.
 pub fn collect_globals(p: *Parser, path: []const u8, allocator: std.mem.Allocator) !std.ArrayList(ParsedGlobal) {
-    // Load source file directly - arocc handles all preprocessing natively
-    // using the bundled sysroot headers configured in init().
-    const source = try p.driver.comp.addSourceFromPath(path);
+    return p.collect_all_globals(&.{path}, allocator);
+}
 
-    // Materialise user -D defines into an aro source (once, on first parse).
+/// Collect globals from every target file.
+///
+/// Each file is parsed in its own Preprocessor so that no aro state
+/// leaks between translation units.  The `aro.Compilation` caches
+/// source file contents, keeping I/O minimal.
+pub fn collect_all_globals(p: *Parser, paths: []const []const u8, allocator: std.mem.Allocator) !std.ArrayList(ParsedGlobal) {
+    // Generate builtin macros on first parse. This is done lazily so that
+    // addCFlags() (which may change -std=) is called first.
+    if (p.builtin_source == null) {
+        p.builtin_source = try p.driver.comp.generateBuiltinMacros(p.driver.system_defines);
+    }
+
     const user_macros = try p.resolveUserMacros();
+
+    var globals = std.ArrayList(ParsedGlobal).empty;
+    errdefer free_globals(allocator, &globals);
+
+    for (paths, 0..) |path, i| {
+        var timer = std.time.Timer.start() catch unreachable;
+        std.debug.print("[fuzzmate] [{d}/{d}] {s} START\n", .{
+            i + 1,
+            paths.len,
+            path,
+        });
+        try p.collectGlobalsFromFile(path, user_macros, allocator, &globals);
+        const elapsed = timer.read();
+        std.debug.print("[fuzzmate] [{d}/{d}] {s} in {d}ms\n", .{
+            i + 1,
+            paths.len,
+            path,
+            elapsed / std.time.ns_per_ms,
+        });
+    }
+    return globals;
+}
+
+/// Parse a single translation unit and append its globals.
+fn collectGlobalsFromFile(
+    p: *Parser,
+    path: []const u8,
+    user_macros: ?aro.Source,
+    allocator: std.mem.Allocator,
+    globals: *std.ArrayList(ParsedGlobal),
+) !void {
+    // Build source list: [empty_main, builtins, compat, user_macros, target]
+    var source_list = std.ArrayList(aro.Source).empty;
+    defer source_list.deinit(allocator);
+
+    const empty_main = try p.comp.addSourceFromBuffer("<fuzzmate>", "\n");
+    try source_list.append(allocator, empty_main);
+    try source_list.append(allocator, p.builtin_source.?);
+    try source_list.append(allocator, p.compat_source);
+    if (user_macros) |um| {
+        try source_list.append(allocator, um);
+    }
+
+    const src = try p.driver.comp.addSourceFromPath(path);
+    try source_list.append(allocator, src);
 
     var pp = try aro.Preprocessor.initDefault(p.driver.comp);
     defer pp.deinit();
-    // Include compat_source and user defines before builtin_source and the
-    // user source so that all macros are visible during preprocessing.
-    const sources = if (user_macros) |um|
-        &[_]aro.Source{ source, p.builtin_source, p.compat_source, um }
-    else
-        &[_]aro.Source{ source, p.builtin_source, p.compat_source };
-    pp.preprocessSources(sources) catch |err| {
-        // Print compilation errors
-        var stdout_buf: [1024]u8 = undefined;
-        var stdout = std.fs.File.stdout().writer(&stdout_buf);
-        defer _ = stdout.interface.flush() catch {};
-        for (p.driver.comp.diagnostics.output.to_list.messages.items) |msg| {
-            try msg.write(&stdout.interface, .escape_codes, true);
-        }
+    pp.preprocessSources(source_list.items) catch |err| {
+        p.printDiagnostics();
         return err;
     };
+
     var tree = try pp.parse();
     defer tree.deinit();
 
-    // First pass: collect typedef names to filter out variables that shadow them.
-    // This prevents generating code like `memset(&my_type_t, ...)` where my_type_t
-    // is both a typedef and a variable name, which causes C compilation errors.
+    // Collect typedef names to filter out variables that shadow them.
     var typedef_names = std.StringHashMap(void).init(allocator);
     defer typedef_names.deinit();
     for (tree.root_decls.items) |idx| {
@@ -237,68 +290,38 @@ pub fn collect_globals(p: *Parser, path: []const u8, allocator: std.mem.Allocato
         }
     }
 
-    var globals = std.ArrayList(ParsedGlobal).empty;
-    errdefer free_globals(allocator, &globals);
-
     for (tree.root_decls.items) |idx| {
         const node = idx.get(&tree);
         switch (node) {
             .variable => |variable| {
                 const loc = tree.tokens.items(.loc)[variable.name_tok];
                 const expanded = loc.expand(p.driver.comp);
-                // Ignore system variables
                 if (expanded.kind != .user) continue;
-                // Ignore const-qualified objects (including arrays of const elements)
                 if (isEffectivelyConst(tree.comp, variable.qt)) continue;
-                // Ignore incomplete types
                 if (variable.qt.hasIncompleteSize(tree.comp)) continue;
 
                 const name_slice = tree.tokSlice(variable.name_tok);
-
-                // Skip variables whose name conflicts with a typedef name.
-                // This avoids generating invalid C like `memset(&type_name, ...)`
-                // where `type_name` is interpreted as a type, not a variable.
                 if (typedef_names.contains(name_slice)) continue;
 
                 // Heuristic: skip variables that look like parsing artifacts.
-                // These occur in two scenarios:
-                //
-                // 1. Typedef parsing artifacts: aro parses constructs like:
-                //      typedef int (*foo_t)(void) __attribute__((warn_unused_result));
-                //    and incorrectly creates both a typedef and a variable named `foo_t`.
-                //
-                // 2. Function parameter artifacts: aro sometimes emits .variable nodes
-                //    for function parameters (e.g., `size_t size` from a function signature),
-                //    which should not appear in root_decls at all.
-                //
-                // We detect these by checking for:
-                // - No initializer (tentative definition)
-                // - No actual definition
-                // - 'auto' storage class (invalid at file scope in C)
-                // - Type is a primitive integer type (not a user-defined type like struct/typedef)
                 if (variable.initializer == null and variable.definition == null and
                     variable.storage_class == .auto and !variable.qt.isInvalid())
                 {
                     const ty = variable.qt.type(tree.comp);
-                    // Filter if type is a primitive integer (covers all int sizes via .int tag)
-                    // This catches spurious variables from function parameters like `size_t size`
                     if (ty == .int) {
                         continue;
                     }
                 }
 
-                const copied_name = try allocator.dupe(u8, name_slice);
-                errdefer allocator.free(copied_name);
-
-                // Capture source file path from the translation unit
-                const source_file_path = path;
+                const source_file_path = expanded.path;
                 const copied_source_file = try allocator.dupe(u8, source_file_path);
                 errdefer allocator.free(copied_source_file);
 
-                // Check if the variable has static storage class (internal linkage)
+                const copied_name = try allocator.dupe(u8, name_slice);
+                errdefer allocator.free(copied_name);
+
                 const is_static = variable.storage_class == .static;
 
-                // Calculate size in bytes (we already know it's complete from the check above)
                 const size_val = variable.qt.sizeofOrNull(tree.comp);
                 if (size_val == null) continue;
                 const size_bytes: u64 = @intCast(size_val.?);
@@ -332,6 +355,14 @@ pub fn collect_globals(p: *Parser, path: []const u8, allocator: std.mem.Allocato
             else => {},
         }
     }
+}
 
-    return globals;
+/// Print accumulated aro diagnostics to stdout.
+fn printDiagnostics(p: *Parser) void {
+    var stdout_buf: [1024]u8 = undefined;
+    var stdout = std.fs.File.stdout().writer(&stdout_buf);
+    defer _ = stdout.interface.flush() catch {};
+    for (p.driver.comp.diagnostics.output.to_list.messages.items) |msg| {
+        msg.write(&stdout.interface, .escape_codes, true) catch {};
+    }
 }

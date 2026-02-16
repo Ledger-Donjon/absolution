@@ -22,6 +22,83 @@ endif()
 
 file(STRINGS "${OBJ_LIST_FILE}" _obj_paths)
 
+# ── Helper: Check if string ends with a given suffix (literal match) ─────
+# Returns TRUE in _result if _str ends with _suffix, FALSE otherwise.
+function(_ends_with _str _suffix _result)
+    string(LENGTH "${_str}" _str_len)
+    string(LENGTH "${_suffix}" _suf_len)
+    if(_suf_len GREATER _str_len)
+        set(${_result} FALSE PARENT_SCOPE)
+        return()
+    endif()
+    math(EXPR _start "${_str_len} - ${_suf_len}")
+    string(SUBSTRING "${_str}" ${_start} ${_suf_len} _tail)
+    if(_tail STREQUAL "${_suffix}")
+        set(${_result} TRUE PARENT_SCOPE)
+    else()
+        set(${_result} FALSE PARENT_SCOPE)
+    endif()
+endfunction()
+
+# ── Helper: Strip leading "../" sequences from a path ────────────────────
+# Returns the path with all leading "../" removed.
+function(_strip_leading_dotdot _path _result)
+    set(_p "${_path}")
+    while(TRUE)
+        if(_p MATCHES "^\\.\\./(.*)")
+            set(_p "${CMAKE_MATCH_1}")
+        else()
+            break()
+        endif()
+    endwhile()
+    set(${_result} "${_p}" PARENT_SCOPE)
+endfunction()
+
+# ── Helper: Find object file matching source path ────────────────────────
+# Tries multiple suffix patterns to handle various CMake generator behaviors.
+function(_find_object_file _src_file _obj_paths _result)
+    # Pattern 1: Direct suffix match with the source file as-is
+    set(_suffix1 "/${_src_file}.o")
+    
+    # Pattern 2: Ninja generator normalizes "../" to "__/"
+    string(REPLACE "../" "__/" _src_ninja "${_src_file}")
+    set(_suffix2 "/${_src_ninja}.o")
+    
+    # Pattern 3: Strip leading "../" and match (for out-of-tree sources)
+    _strip_leading_dotdot("${_src_file}" _src_stripped)
+    set(_suffix3 "/${_src_stripped}.o")
+    
+    # Pattern 4: Ninja-normalized version of stripped path
+    string(REPLACE "../" "__/" _src_stripped_ninja "${_src_stripped}")
+    set(_suffix4 "/${_src_stripped_ninja}.o")
+    
+    set(_obj "")
+    foreach(_candidate ${_obj_paths})
+        _ends_with("${_candidate}" "${_suffix1}" _match)
+        if(_match)
+            set(_obj "${_candidate}")
+            break()
+        endif()
+        _ends_with("${_candidate}" "${_suffix2}" _match)
+        if(_match)
+            set(_obj "${_candidate}")
+            break()
+        endif()
+        _ends_with("${_candidate}" "${_suffix3}" _match)
+        if(_match)
+            set(_obj "${_candidate}")
+            break()
+        endif()
+        _ends_with("${_candidate}" "${_suffix4}" _match)
+        if(_match)
+            set(_obj "${_candidate}")
+            break()
+        endif()
+    endforeach()
+    
+    set(${_result} "${_obj}" PARENT_SCOPE)
+endfunction()
+
 # ── Process redefinitions ────────────────────────────────────────────────
 file(STRINGS "${REDEF_FILE}" _lines)
 foreach(_line ${_lines})
@@ -35,26 +112,36 @@ foreach(_line ${_lines})
     list(GET _parts 1 _old_sym)
     list(GET _parts 2 _new_sym)
 
-    # Find the object file whose path ends with <source_path>.o.
-    # CMake Ninja generator replaces "../" with "__/" in object paths,
-    # so we try both the literal source path and the Ninja-normalized form.
-    string(REPLACE "../" "__/" _src_ninja "${_src_file}")
+    # Skip header files — they don't produce object files.
+    # Static variables in headers are duplicated per translation unit that
+    # includes them, so there's no single .o to rename the symbol in.
+    # The fuzzmate parser may emit these; we skip them silently.
+    if(_src_file MATCHES "\\.(h|hpp|hxx|H)$")
+        continue()
+    endif()
 
-    set(_obj "")
-    foreach(_candidate ${_obj_paths})
-        # Match suffix: /src/decoder.c.o or __/src/decoder.c.o
-        if(_candidate MATCHES "/${_src_file}\\.o$"
-           OR _candidate MATCHES "/${_src_ninja}\\.o$")
-            set(_obj "${_candidate}")
-            break()
-        endif()
-    endforeach()
+    _find_object_file("${_src_file}" "${_obj_paths}" _obj)
 
     if(NOT _obj)
+        # Provide detailed diagnostic output for debugging.
+        _strip_leading_dotdot("${_src_file}" _src_stripped)
+        string(REPLACE "../" "__/" _src_ninja "${_src_file}")
+        string(REPLACE "../" "__/" _src_stripped_ninja "${_src_stripped}")
+        
+        message(STATUS "ApplyRedef: searching for object file for source '${_src_file}'")
+        message(STATUS "  Suffix patterns tried:")
+        message(STATUS "    1. '/${_src_file}.o'")
+        message(STATUS "    2. '/${_src_ninja}.o'")
+        message(STATUS "    3. '/${_src_stripped}.o'")
+        message(STATUS "    4. '/${_src_stripped_ninja}.o'")
+        message(STATUS "  Object files in ${OBJ_LIST_FILE}:")
+        foreach(_p ${_obj_paths})
+            message(STATUS "    ${_p}")
+        endforeach()
         message(FATAL_ERROR
             "ApplyRedef: no object file found for source '${_src_file}'.\n"
-            "  Looked for suffix '${_src_file}.o' (and '${_src_ninja}.o') in:\n"
-            "  ${OBJ_LIST_FILE}")
+            "  See suffix patterns above.\n"
+            "  Object list file: ${OBJ_LIST_FILE}")
     endif()
 
     execute_process(

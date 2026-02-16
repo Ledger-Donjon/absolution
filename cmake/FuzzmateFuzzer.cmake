@@ -31,6 +31,24 @@
 #                           properties are forwarded to the fuzzmate CLI via
 #                           generator expressions.
 #   SANITIZERS            — sanitizer list (default: fuzzer,address).
+#
+# Created targets:
+#   ${NAME}_objs      — OBJECT library containing compiled target sources.
+#   ${NAME}_generate  — Custom target that runs fuzzmate CLI to produce artifacts.
+#   ${NAME}_redef     — Custom target that applies objcopy symbol redefinitions.
+#   ${NAME}           — Final fuzzer executable.
+#
+# Target properties on ${NAME}_generate:
+#   FUZZMATE_FUZZER_C  — Path to the generated fuzzer.c file.
+#   FUZZMATE_REDEF     — Path to the generated .redef file.
+#   FUZZMATE_SEED      — Path to the generated .seed file.
+#
+# Exported variables (PARENT_SCOPE):
+#   ${NAME}_SEED_FILE      — Path to the generated seed file.
+#   ${NAME}_FUZZER_C       — Path to the generated fuzzer.c file.
+#   ${NAME}_REDEF_FILE     — Path to the generated .redef file.
+#   ${NAME}_GENERATE_TARGET — Name of the generate target.
+#   ${NAME}_REDEF_TARGET   — Name of the redef target.
 
 function(fuzzmate_add_fuzzer)
     cmake_parse_arguments(
@@ -62,6 +80,7 @@ function(fuzzmate_add_fuzzer)
     set(_FUZZER_C    "${_FUZZ_DIR}/fuzzer.c")
     set(_REDEF_FILE  "${_FUZZ_DIR}/fuzzer.redef")
     set(_SEED_FILE   "${_FUZZ_DIR}/fuzzer.seed")
+    set(_OBJ_LIST    "${_FUZZ_DIR}/objfiles.txt")
 
     # ── Resolve target paths ────────────────────────────────────────────
     # Source-relative paths are passed to fuzzmate and written into the
@@ -103,18 +122,20 @@ function(fuzzmate_add_fuzzer)
     # Write the object file list at generation time so that ApplyRedef.cmake
     # can locate objects by suffix-matching at build time.
     file(GENERATE
-        OUTPUT "${_FUZZ_DIR}/objfiles.txt"
+        OUTPUT "${_OBJ_LIST}"
         CONTENT "$<JOIN:$<TARGET_OBJECTS:${_OBJ_LIB}>,\n>\n"
     )
 
-    # ── Step 2: Run fuzzmate ─────────────────────────────────────────────
-    # The fuzzmate CLI needs -I and -D flags explicitly.  We query the
-    # OBJECT library's full property closure (explicit + transitive) via
-    # generator expressions.
+    # ── Step 2: Run fuzzmate (named custom target) ────────────────────────
+    # C compiler flags (-I, -D, -f*, etc.) are passed after '--' separator.
+    # We query the OBJECT library's full property closure via generator expressions.
     set(_FM_GENEX_INCS
         "$<$<BOOL:$<TARGET_PROPERTY:${_OBJ_LIB},INCLUDE_DIRECTORIES>>:-I$<SEMICOLON>$<JOIN:$<TARGET_PROPERTY:${_OBJ_LIB},INCLUDE_DIRECTORIES>,$<SEMICOLON>-I$<SEMICOLON>>>")
     set(_FM_GENEX_DEFS
         "$<$<BOOL:$<TARGET_PROPERTY:${_OBJ_LIB},COMPILE_DEFINITIONS>>:-D$<SEMICOLON>$<JOIN:$<TARGET_PROPERTY:${_OBJ_LIB},COMPILE_DEFINITIONS>,$<SEMICOLON>-D$<SEMICOLON>>>")
+    # COMPILE_OPTIONS are passed as-is (e.g. -fshort-enums, -std=c99)
+    set(_FM_GENEX_OPTS
+        "$<$<BOOL:$<TARGET_PROPERTY:${_OBJ_LIB},COMPILE_OPTIONS>>:$<JOIN:$<TARGET_PROPERTY:${_OBJ_LIB},COMPILE_OPTIONS>,$<SEMICOLON>>>")
 
     set(_FM_CMD "${FUZZMATE_EXECUTABLE}")
     foreach(_t ${_REL_TARGETS})
@@ -131,9 +152,13 @@ function(fuzzmate_add_fuzzer)
         list(APPEND _FM_CMD -i "${_abs_inv}")
     endif()
 
-    add_custom_command(
-        OUTPUT "${_FUZZER_C}" "${_REDEF_FILE}" "${_SEED_FILE}"
-        COMMAND ${_FM_CMD} ${_FM_GENEX_INCS} ${_FM_GENEX_DEFS}
+    # Named custom target for the fuzzmate generation step.
+    # BYPRODUCTS tells the build system about the files we produce.
+    # C flags are passed after '--' separator.
+    set(_GENERATE_TARGET "${FUZZ_NAME}_generate")
+    add_custom_target(${_GENERATE_TARGET}
+        COMMAND ${_FM_CMD} -- ${_FM_GENEX_INCS} ${_FM_GENEX_DEFS} ${_FM_GENEX_OPTS}
+        BYPRODUCTS "${_FUZZER_C}" "${_REDEF_FILE}" "${_SEED_FILE}"
         COMMAND_EXPAND_LISTS
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
         DEPENDS ${_ABS_TARGETS}
@@ -141,26 +166,31 @@ function(fuzzmate_add_fuzzer)
         VERBATIM
     )
 
+    # Set target properties for artifact discovery.
+    set_target_properties(${_GENERATE_TARGET} PROPERTIES
+        FUZZMATE_FUZZER_C  "${_FUZZER_C}"
+        FUZZMATE_REDEF     "${_REDEF_FILE}"
+        FUZZMATE_SEED      "${_SEED_FILE}"
+    )
+
     # ── Step 3: Apply symbol redefinitions (objcopy) ─────────────────────
     # Mutates the OBJECT library's .o files in place.  The dependency chain
     # (obj lib + fuzzmate → redef → link) ensures objcopy finishes before
     # linking and only runs after both the objects and the redef file exist.
-
-    # Intermediate target so that the redef step can depend on the fuzzmate
-    # custom command (which produces the redef file).
-    add_custom_target(${FUZZ_NAME}_fuzzmate DEPENDS "${_REDEF_FILE}")
-
-    add_custom_target(${FUZZ_NAME}_redef
+    set(_REDEF_TARGET "${FUZZ_NAME}_redef")
+    add_custom_target(${_REDEF_TARGET}
         COMMAND "${CMAKE_COMMAND}"
             "-DREDEF_FILE=${_REDEF_FILE}"
-            "-DOBJ_LIST_FILE=${_FUZZ_DIR}/objfiles.txt"
+            "-DOBJ_LIST_FILE=${_OBJ_LIST}"
             "-DOBJCOPY=${FUZZMATE_OBJCOPY}"
             -P "${_FUZZMATE_MODULE_DIR}/ApplyRedef.cmake"
+        WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
         COMMENT "[fuzzmate] Applying symbol redefinitions for ${FUZZ_NAME}"
         VERBATIM
     )
+
     # Ensure: (objects compiled + fuzzmate done) → objcopy runs → link
-    add_dependencies(${FUZZ_NAME}_redef ${_OBJ_LIB} ${FUZZ_NAME}_fuzzmate)
+    add_dependencies(${_REDEF_TARGET} ${_OBJ_LIB} ${_GENERATE_TARGET})
 
     # ── Step 4: Link into the fuzzer executable ──────────────────────────
     add_executable(${FUZZ_NAME} "${_FUZZER_C}")
@@ -188,8 +218,12 @@ function(fuzzmate_add_fuzzer)
         target_compile_definitions(${FUZZ_NAME} PRIVATE "${_def}")
     endforeach()
 
-    add_dependencies(${FUZZ_NAME} ${FUZZ_NAME}_redef)
+    add_dependencies(${FUZZ_NAME} ${_REDEF_TARGET})
 
     # ── Export useful variables to the caller ───────────────────────────
-    set(${FUZZ_NAME}_SEED_FILE "${_SEED_FILE}" PARENT_SCOPE)
+    set(${FUZZ_NAME}_SEED_FILE       "${_SEED_FILE}"       PARENT_SCOPE)
+    set(${FUZZ_NAME}_FUZZER_C        "${_FUZZER_C}"        PARENT_SCOPE)
+    set(${FUZZ_NAME}_REDEF_FILE      "${_REDEF_FILE}"      PARENT_SCOPE)
+    set(${FUZZ_NAME}_GENERATE_TARGET "${_GENERATE_TARGET}" PARENT_SCOPE)
+    set(${FUZZ_NAME}_REDEF_TARGET    "${_REDEF_TARGET}"    PARENT_SCOPE)
 endfunction()
