@@ -37,7 +37,7 @@ builtin_source: ?aro.Source = null,
 compat_source: aro.Source,
 /// User -D/-U define text accumulated as `#define`/`#undef` lines by arocc's
 /// Driver.parseArgs().  Converted to a source via `addSourceFromOwnedBuffer`
-/// before the first call to `collect_globals`.
+/// before the first call to `collect_all_globals`.
 macro_buf: std.ArrayList(u8) = .empty,
 /// Lazily-built source from `macro_buf`; null until the first parse.
 user_macro_source: ?aro.Source = null,
@@ -198,15 +198,6 @@ fn isEffectivelyConst(comp: *aro.Compilation, qt: aro.QualType) bool {
     return false;
 }
 
-/// Collect non-const, user-defined globals along with their bit widths
-/// from a single translation unit.
-///
-/// Uses arocc's native preprocessing with the bundled sysroot headers.
-/// System headers are automatically filtered via Source.Kind tracking.
-pub fn collect_globals(p: *Parser, path: []const u8, allocator: std.mem.Allocator) !std.ArrayList(ParsedGlobal) {
-    return p.collect_all_globals(&.{path}, allocator);
-}
-
 /// Collect globals from every target file.
 ///
 /// Each file is parsed in its own Preprocessor so that no aro state
@@ -224,6 +215,11 @@ pub fn collect_all_globals(p: *Parser, paths: []const []const u8, allocator: std
     var globals = std.ArrayList(ParsedGlobal).empty;
     errdefer free_globals(allocator, &globals);
 
+    // Track non-static globals already collected so that the same linker
+    // symbol appearing in multiple translation units is emitted only once.
+    var seen_globals = std.StringHashMap([]const u8).init(allocator);
+    defer seen_globals.deinit();
+
     for (paths, 0..) |path, i| {
         var timer = std.time.Timer.start() catch unreachable;
         std.debug.print("[fuzzmate] [{d}/{d}] {s} START\n", .{
@@ -231,7 +227,7 @@ pub fn collect_all_globals(p: *Parser, paths: []const []const u8, allocator: std
             paths.len,
             path,
         });
-        try p.collectGlobalsFromFile(path, user_macros, allocator, &globals);
+        try p.collectGlobalsFromFile(path, user_macros, allocator, &globals, &seen_globals);
         const elapsed = timer.read();
         std.debug.print("[fuzzmate] [{d}/{d}] {s} in {d}ms\n", .{
             i + 1,
@@ -244,12 +240,15 @@ pub fn collect_all_globals(p: *Parser, paths: []const []const u8, allocator: std
 }
 
 /// Parse a single translation unit and append its globals.
+/// Non-static globals that have already been seen (tracked via `seen_globals`)
+/// are skipped to avoid duplicate extern declarations in the generated fuzzer.
 fn collectGlobalsFromFile(
     p: *Parser,
     path: []const u8,
     user_macros: ?aro.Source,
     allocator: std.mem.Allocator,
     globals: *std.ArrayList(ParsedGlobal),
+    seen_globals: *std.StringHashMap([]const u8),
 ) !void {
     // Build source list: [empty_main, builtins, compat, user_macros, target]
     var source_list = std.ArrayList(aro.Source).empty;
@@ -322,6 +321,22 @@ fn collectGlobalsFromFile(
 
                 const is_static = variable.storage_class == .static;
 
+                // Non-static globals share a single linker symbol across all
+                // translation units.  If we already collected one with this
+                // name, skip the duplicate and warn.
+                if (!is_static) {
+                    if (seen_globals.get(name_slice)) |first_file| {
+                        std.debug.print(
+                            "[fuzzmate] warning: duplicate non-static global '{s}' in {s} " ++
+                                "(first seen in {s}) — skipped\n",
+                            .{ name_slice, source_file_path, first_file },
+                        );
+                        allocator.free(copied_source_file);
+                        allocator.free(copied_name);
+                        continue;
+                    }
+                }
+
                 const size_val = variable.qt.sizeofOrNull(tree.comp);
                 if (size_val == null) continue;
                 const size_bytes: u64 = @intCast(size_val.?);
@@ -341,6 +356,10 @@ fn collectGlobalsFromFile(
                 errdefer {
                     for (fields) |*f| f.deinit(allocator);
                     allocator.free(fields);
+                }
+
+                if (!is_static) {
+                    try seen_globals.put(name_slice, copied_source_file);
                 }
 
                 try globals.append(allocator, .{

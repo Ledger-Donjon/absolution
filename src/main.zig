@@ -21,7 +21,7 @@ const cli = clap.parseParamsComptime(
     \\-r, --redef <str>        Required redefinition file output path.
     \\-i, --invariant <str>    Optional invariant (.in or .zon).
     \\-z, --zon <str>          Optional zon output path.
-    \\-s, --seed <str>         Optional seed output path (default: <out>.seed).
+    \\-s, --seed <str>         Optional seed output path (default: fuzzer.seed).
     \\-e, --entry <str>        Optional harness function name (default: AbsolutionTestOneInput).
     \\<str>...                 C compiler flags after '--' (e.g. -I path -DFOO -fshort-enums).
     \\
@@ -76,8 +76,6 @@ fn parseArgs(allocator: std.mem.Allocator) !Options {
 
     var targets_list = std.ArrayList([]const u8).empty;
     errdefer targets_list.deinit(allocator);
-    // defer targets_list.deinit(allocator); // We call toOwnedSlice later
-    // Collect targets from -t arguments
     for (res.args.targets) |t| {
         try targets_list.append(allocator, t);
     }
@@ -117,7 +115,7 @@ fn parseArgs(allocator: std.mem.Allocator) !Options {
 
 /// Entry point: parse CLI, collect globals, emit fuzzer sources, and seed file.
 pub fn main() !void {
-    // Set up exeution allocators
+    // Set up execution allocators
     var gpa = std.heap.GeneralPurposeAllocator(.{ .stack_trace_frames = 8 }){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();

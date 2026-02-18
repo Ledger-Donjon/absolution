@@ -166,25 +166,3 @@ fn getAnyOsAnySubdir(arena: std.mem.Allocator, os: std.Target.Os.Tag) !?[]const 
 
     return try std.fmt.allocPrint(arena, "any-{s}-any", .{os_name});
 }
-
-/// Check if the OS is Unix-like (has /usr/include convention).
-fn isUnixLike(os: std.Target.Os.Tag) bool {
-    return switch (os) {
-        .linux,
-        .macos,
-        .ios,
-        .tvos,
-        .watchos,
-        .visionos,
-        .freebsd,
-        .netbsd,
-        .openbsd,
-        .dragonfly,
-        .solaris,
-        .illumos,
-        .haiku,
-        .hurd,
-        => true,
-        else => false,
-    };
-}
