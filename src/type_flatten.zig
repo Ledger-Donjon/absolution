@@ -142,7 +142,7 @@ pub fn flattenType(
     var domain: Domain = .top;
     const ty = qt.type(tree.comp);
     if (ty == .bool) {
-        domain = .{ .values = &.{ "0", "1" } };
+        domain = .{ .values = &.{ &[_]u8{0}, &[_]u8{1} } };
     }
 
     const dims_info = try dim_stack.cloneDims(allocator);

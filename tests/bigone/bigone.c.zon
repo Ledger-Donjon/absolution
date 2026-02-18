@@ -13,7 +13,7 @@
             .dims = .{},
             .dim_positions = .{},
             .is_padding = false,
-            .domain = .{ .values = .{ "0", "1" } },
+            .domain = .{ .values = .{ "\x00", "\x01" } },
             .domain_owned = false,
         }},
     },
@@ -142,7 +142,7 @@
             .dims = .{},
             .dim_positions = .{},
             .is_padding = false,
-            .domain = .{ .values = .{ "0", "1" } },
+            .domain = .{ .values = .{ "\x00", "\x01" } },
             .domain_owned = false,
         }},
     },
@@ -533,7 +533,7 @@
                 .dims = .{},
                 .dim_positions = .{},
                 .is_padding = false,
-                .domain = .{ .values = .{ "0", "1" } },
+                .domain = .{ .values = .{ "\x00", "\x01" } },
                 .domain_owned = false,
             },
             .{
@@ -808,7 +808,7 @@
                 .dims = .{},
                 .dim_positions = .{},
                 .is_padding = false,
-                .domain = .{ .values = .{ "0", "1" } },
+                .domain = .{ .values = .{ "\x00", "\x01" } },
                 .domain_owned = false,
             },
             .{
@@ -995,7 +995,7 @@
                 .dims = .{},
                 .dim_positions = .{},
                 .is_padding = false,
-                .domain = .{ .values = .{ "0", "1" } },
+                .domain = .{ .values = .{ "\x00", "\x01" } },
                 .domain_owned = false,
             },
             .{
@@ -1910,7 +1910,7 @@
                 .dims = .{},
                 .dim_positions = .{},
                 .is_padding = false,
-                .domain = .{ .values = .{ "0", "1" } },
+                .domain = .{ .values = .{ "\x00", "\x01" } },
                 .domain_owned = false,
             },
             .{
@@ -2086,7 +2086,7 @@
                 .dims = .{},
                 .dim_positions = .{},
                 .is_padding = false,
-                .domain = .{ .values = .{ "0", "1" } },
+                .domain = .{ .values = .{ "\x00", "\x01" } },
                 .domain_owned = false,
             },
             .{
@@ -3602,7 +3602,7 @@
             .dims = .{},
             .dim_positions = .{},
             .is_padding = false,
-            .domain = .{ .values = .{ "0", "1" } },
+            .domain = .{ .values = .{ "\x00", "\x01" } },
             .domain_owned = false,
         }},
     },
@@ -3989,7 +3989,7 @@
                 .dims = .{},
                 .dim_positions = .{},
                 .is_padding = false,
-                .domain = .{ .values = .{ "0", "1" } },
+                .domain = .{ .values = .{ "\x00", "\x01" } },
                 .domain_owned = false,
             },
             .{
@@ -4262,7 +4262,7 @@
                 .dims = .{},
                 .dim_positions = .{},
                 .is_padding = false,
-                .domain = .{ .values = .{ "0", "1" } },
+                .domain = .{ .values = .{ "\x00", "\x01" } },
                 .domain_owned = false,
             },
             .{
@@ -4372,7 +4372,7 @@
                 .dims = .{},
                 .dim_positions = .{},
                 .is_padding = false,
-                .domain = .{ .values = .{ "0", "1" } },
+                .domain = .{ .values = .{ "\x00", "\x01" } },
                 .domain_owned = false,
             },
             .{
@@ -4576,7 +4576,7 @@
                 .dims = .{},
                 .dim_positions = .{},
                 .is_padding = false,
-                .domain = .{ .values = .{ "0", "1" } },
+                .domain = .{ .values = .{ "\x00", "\x01" } },
                 .domain_owned = false,
             },
             .{
@@ -4664,7 +4664,7 @@
                 .dims = .{},
                 .dim_positions = .{},
                 .is_padding = false,
-                .domain = .{ .values = .{ "0", "1" } },
+                .domain = .{ .values = .{ "\x00", "\x01" } },
                 .domain_owned = false,
             },
             .{
@@ -4675,7 +4675,7 @@
                 .dims = .{},
                 .dim_positions = .{},
                 .is_padding = false,
-                .domain = .{ .values = .{ "0", "1" } },
+                .domain = .{ .values = .{ "\x00", "\x01" } },
                 .domain_owned = false,
             },
             .{
@@ -4719,7 +4719,7 @@
                 .dims = .{},
                 .dim_positions = .{},
                 .is_padding = false,
-                .domain = .{ .values = .{ "0", "1" } },
+                .domain = .{ .values = .{ "\x00", "\x01" } },
                 .domain_owned = false,
             },
             .{
@@ -4730,7 +4730,7 @@
                 .dims = .{},
                 .dim_positions = .{},
                 .is_padding = false,
-                .domain = .{ .values = .{ "0", "1" } },
+                .domain = .{ .values = .{ "\x00", "\x01" } },
                 .domain_owned = false,
             },
             .{
@@ -4878,7 +4878,7 @@
                 .dims = .{},
                 .dim_positions = .{},
                 .is_padding = false,
-                .domain = .{ .values = .{ "0", "1" } },
+                .domain = .{ .values = .{ "\x00", "\x01" } },
                 .domain_owned = false,
             },
             .{
@@ -5140,7 +5140,7 @@
                 .dims = .{},
                 .dim_positions = .{},
                 .is_padding = false,
-                .domain = .{ .values = .{ "0", "1" } },
+                .domain = .{ .values = .{ "\x00", "\x01" } },
                 .domain_owned = false,
             },
             .{
@@ -5372,7 +5372,7 @@
             .dims = .{},
             .dim_positions = .{},
             .is_padding = false,
-            .domain = .{ .values = .{ "0", "1" } },
+            .domain = .{ .values = .{ "\x00", "\x01" } },
             .domain_owned = false,
         }},
     },
@@ -5693,7 +5693,7 @@
                 .dims = .{},
                 .dim_positions = .{},
                 .is_padding = false,
-                .domain = .{ .values = .{ "0", "1" } },
+                .domain = .{ .values = .{ "\x00", "\x01" } },
                 .domain_owned = false,
             },
             .{
@@ -5704,7 +5704,7 @@
                 .dims = .{},
                 .dim_positions = .{},
                 .is_padding = false,
-                .domain = .{ .values = .{ "0", "1" } },
+                .domain = .{ .values = .{ "\x00", "\x01" } },
                 .domain_owned = false,
             },
             .{
@@ -5923,7 +5923,7 @@
                 .dims = .{},
                 .dim_positions = .{},
                 .is_padding = false,
-                .domain = .{ .values = .{ "0", "1" } },
+                .domain = .{ .values = .{ "\x00", "\x01" } },
                 .domain_owned = false,
             },
             .{
@@ -5934,7 +5934,7 @@
                 .dims = .{},
                 .dim_positions = .{},
                 .is_padding = false,
-                .domain = .{ .values = .{ "0", "1" } },
+                .domain = .{ .values = .{ "\x00", "\x01" } },
                 .domain_owned = false,
             },
             .{
@@ -6028,7 +6028,7 @@
             .dims = .{},
             .dim_positions = .{},
             .is_padding = false,
-            .domain = .{ .values = .{ "0", "1" } },
+            .domain = .{ .values = .{ "\x00", "\x01" } },
             .domain_owned = false,
         }},
     },
@@ -6139,7 +6139,7 @@
             .dims = .{},
             .dim_positions = .{},
             .is_padding = false,
-            .domain = .{ .values = .{ "0", "1" } },
+            .domain = .{ .values = .{ "\x00", "\x01" } },
             .domain_owned = false,
         }},
     },
@@ -6384,7 +6384,7 @@
                 .dims = .{},
                 .dim_positions = .{},
                 .is_padding = false,
-                .domain = .{ .values = .{ "0", "1" } },
+                .domain = .{ .values = .{ "\x00", "\x01" } },
                 .domain_owned = false,
             },
             .{
@@ -6659,7 +6659,7 @@
                 .dims = .{},
                 .dim_positions = .{},
                 .is_padding = false,
-                .domain = .{ .values = .{ "0", "1" } },
+                .domain = .{ .values = .{ "\x00", "\x01" } },
                 .domain_owned = false,
             },
             .{
@@ -6846,7 +6846,7 @@
                 .dims = .{},
                 .dim_positions = .{},
                 .is_padding = false,
-                .domain = .{ .values = .{ "0", "1" } },
+                .domain = .{ .values = .{ "\x00", "\x01" } },
                 .domain_owned = false,
             },
             .{
@@ -7725,7 +7725,7 @@
                 .dims = .{},
                 .dim_positions = .{},
                 .is_padding = false,
-                .domain = .{ .values = .{ "0", "1" } },
+                .domain = .{ .values = .{ "\x00", "\x01" } },
                 .domain_owned = false,
             },
             .{
@@ -7901,7 +7901,7 @@
                 .dims = .{},
                 .dim_positions = .{},
                 .is_padding = false,
-                .domain = .{ .values = .{ "0", "1" } },
+                .domain = .{ .values = .{ "\x00", "\x01" } },
                 .domain_owned = false,
             },
             .{
@@ -9227,7 +9227,7 @@
             .dims = .{},
             .dim_positions = .{},
             .is_padding = false,
-            .domain = .{ .values = .{ "0", "1" } },
+            .domain = .{ .values = .{ "\x00", "\x01" } },
             .domain_owned = false,
         }},
     },
@@ -9614,7 +9614,7 @@
                 .dims = .{},
                 .dim_positions = .{},
                 .is_padding = false,
-                .domain = .{ .values = .{ "0", "1" } },
+                .domain = .{ .values = .{ "\x00", "\x01" } },
                 .domain_owned = false,
             },
             .{
@@ -9887,7 +9887,7 @@
                 .dims = .{},
                 .dim_positions = .{},
                 .is_padding = false,
-                .domain = .{ .values = .{ "0", "1" } },
+                .domain = .{ .values = .{ "\x00", "\x01" } },
                 .domain_owned = false,
             },
             .{
@@ -9997,7 +9997,7 @@
                 .dims = .{},
                 .dim_positions = .{},
                 .is_padding = false,
-                .domain = .{ .values = .{ "0", "1" } },
+                .domain = .{ .values = .{ "\x00", "\x01" } },
                 .domain_owned = false,
             },
             .{
@@ -10201,7 +10201,7 @@
                 .dims = .{},
                 .dim_positions = .{},
                 .is_padding = false,
-                .domain = .{ .values = .{ "0", "1" } },
+                .domain = .{ .values = .{ "\x00", "\x01" } },
                 .domain_owned = false,
             },
             .{
@@ -10289,7 +10289,7 @@
                 .dims = .{},
                 .dim_positions = .{},
                 .is_padding = false,
-                .domain = .{ .values = .{ "0", "1" } },
+                .domain = .{ .values = .{ "\x00", "\x01" } },
                 .domain_owned = false,
             },
             .{
@@ -10300,7 +10300,7 @@
                 .dims = .{},
                 .dim_positions = .{},
                 .is_padding = false,
-                .domain = .{ .values = .{ "0", "1" } },
+                .domain = .{ .values = .{ "\x00", "\x01" } },
                 .domain_owned = false,
             },
             .{
@@ -10344,7 +10344,7 @@
                 .dims = .{},
                 .dim_positions = .{},
                 .is_padding = false,
-                .domain = .{ .values = .{ "0", "1" } },
+                .domain = .{ .values = .{ "\x00", "\x01" } },
                 .domain_owned = false,
             },
             .{
@@ -10355,7 +10355,7 @@
                 .dims = .{},
                 .dim_positions = .{},
                 .is_padding = false,
-                .domain = .{ .values = .{ "0", "1" } },
+                .domain = .{ .values = .{ "\x00", "\x01" } },
                 .domain_owned = false,
             },
             .{
@@ -10503,7 +10503,7 @@
                 .dims = .{},
                 .dim_positions = .{},
                 .is_padding = false,
-                .domain = .{ .values = .{ "0", "1" } },
+                .domain = .{ .values = .{ "\x00", "\x01" } },
                 .domain_owned = false,
             },
             .{
@@ -10765,7 +10765,7 @@
                 .dims = .{},
                 .dim_positions = .{},
                 .is_padding = false,
-                .domain = .{ .values = .{ "0", "1" } },
+                .domain = .{ .values = .{ "\x00", "\x01" } },
                 .domain_owned = false,
             },
             .{
@@ -10997,7 +10997,7 @@
             .dims = .{},
             .dim_positions = .{},
             .is_padding = false,
-            .domain = .{ .values = .{ "0", "1" } },
+            .domain = .{ .values = .{ "\x00", "\x01" } },
             .domain_owned = false,
         }},
     },
@@ -11318,7 +11318,7 @@
                 .dims = .{},
                 .dim_positions = .{},
                 .is_padding = false,
-                .domain = .{ .values = .{ "0", "1" } },
+                .domain = .{ .values = .{ "\x00", "\x01" } },
                 .domain_owned = false,
             },
             .{
@@ -11329,7 +11329,7 @@
                 .dims = .{},
                 .dim_positions = .{},
                 .is_padding = false,
-                .domain = .{ .values = .{ "0", "1" } },
+                .domain = .{ .values = .{ "\x00", "\x01" } },
                 .domain_owned = false,
             },
             .{
@@ -11512,7 +11512,7 @@
                 .dims = .{},
                 .dim_positions = .{},
                 .is_padding = false,
-                .domain = .{ .values = .{ "0", "1" } },
+                .domain = .{ .values = .{ "\x00", "\x01" } },
                 .domain_owned = false,
             },
             .{
@@ -11523,7 +11523,7 @@
                 .dims = .{},
                 .dim_positions = .{},
                 .is_padding = false,
-                .domain = .{ .values = .{ "0", "1" } },
+                .domain = .{ .values = .{ "\x00", "\x01" } },
                 .domain_owned = false,
             },
             .{
