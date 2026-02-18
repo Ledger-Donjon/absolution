@@ -24,12 +24,13 @@
 #   INCLUDE_DIRECTORIES   — extra -I paths for compiling targets.
 #   COMPILE_DEFINITIONS   — preprocessor defines (NAME or NAME=VALUE).
 #   COMPILE_OPTIONS       — extra compiler flags for compiling targets.
-#   LINK_LIBRARIES        — extra libraries to link into the fuzzer.
-#                           CMake target properties (PUBLIC/INTERFACE include dirs,
-#                           compile definitions, compile options) are automatically
-#                           propagated to the OBJECT library compilation.  The same
-#                           properties are forwarded to the fuzzmate CLI via
-#                           generator expressions.
+#   LINK_LIBRARIES        — libraries to link into the fuzzer.  CMake targets in
+#                           this list are "absorbed": their source files (and those
+#                           of their transitive link dependencies) are compiled into
+#                           the OBJECT library and passed to fuzzmate for analysis.
+#                           This ensures globals in dependency libraries are also
+#                           discovered and redefined.  Non-target names (e.g. -lm)
+#                           and IMPORTED targets are linked normally.
 #   SANITIZERS            — sanitizer list (default: fuzzer,address).
 #
 # Created targets:
@@ -49,6 +50,67 @@
 #   ${NAME}_REDEF_FILE     — Path to the generated .redef file.
 #   ${NAME}_GENERATE_TARGET — Name of the generate target.
 #   ${NAME}_REDEF_TARGET   — Name of the redef target.
+
+# ── Helper: recursively collect source files from CMake target trees ────
+# Walks LINK_LIBRARIES and INTERFACE_LINK_LIBRARIES of each target, collecting
+# absolute source-file paths from every reachable, non-imported target.
+#
+# Arguments (by name — pass variable names, not values, for the three outputs):
+#   _targets      — list of items to walk (target names, plain lib names, …)
+#   _out_sources  — accumulated list of absolute source file paths
+#   _out_absorbed — accumulated list of CMake target names that were absorbed
+#   _visited      — bookkeeping set of already-visited target names
+function(_fuzzmate_collect_sources _targets _out_sources _out_absorbed _visited)
+    set(_srcs ${${_out_sources}})
+    set(_abs  ${${_out_absorbed}})
+    set(_vis  ${${_visited}})
+
+    foreach(_item ${_targets})
+        if("${_item}" MATCHES "^\\$<")
+            continue()
+        endif()
+        if(NOT TARGET "${_item}")
+            continue()
+        endif()
+        if("${_item}" IN_LIST _vis)
+            continue()
+        endif()
+        list(APPEND _vis "${_item}")
+
+        get_target_property(_type     "${_item}" TYPE)
+        get_target_property(_imported "${_item}" IMPORTED)
+        if(_imported)
+            continue()
+        endif()
+
+        if(NOT _type STREQUAL "INTERFACE_LIBRARY")
+            get_target_property(_target_srcs "${_item}" SOURCES)
+            if(_target_srcs)
+                get_target_property(_src_dir "${_item}" SOURCE_DIR)
+                foreach(_s ${_target_srcs})
+                    if(NOT IS_ABSOLUTE "${_s}")
+                        set(_s "${_src_dir}/${_s}")
+                    endif()
+                    list(APPEND _srcs "${_s}")
+                endforeach()
+            endif()
+        endif()
+        list(APPEND _abs "${_item}")
+
+        get_target_property(_deps "${_item}" LINK_LIBRARIES)
+        if(_deps)
+            _fuzzmate_collect_sources("${_deps}" _srcs _abs _vis)
+        endif()
+        get_target_property(_ideps "${_item}" INTERFACE_LINK_LIBRARIES)
+        if(_ideps)
+            _fuzzmate_collect_sources("${_ideps}" _srcs _abs _vis)
+        endif()
+    endforeach()
+
+    set(${_out_sources}  "${_srcs}" PARENT_SCOPE)
+    set(${_out_absorbed} "${_abs}"  PARENT_SCOPE)
+    set(${_visited}      "${_vis}"  PARENT_SCOPE)
+endfunction()
 
 function(fuzzmate_add_fuzzer)
     cmake_parse_arguments(
@@ -92,6 +154,32 @@ function(fuzzmate_add_fuzzer)
         file(RELATIVE_PATH _rel "${CMAKE_SOURCE_DIR}" "${_abs}")
         list(APPEND _REL_TARGETS "${_rel}")
         list(APPEND _ABS_TARGETS "${_abs}")
+    endforeach()
+
+    # ── Absorb sources from LINK_LIBRARIES dependencies ──────────────────
+    # Recursively walk all LINK_LIBRARIES targets, collect their sources,
+    # and fold them into the OBJECT library so fuzzmate can parse and
+    # redefine symbols across the entire dependency tree.
+    set(_dep_sources "")
+    set(_absorbed_targets "")
+    set(_visited_targets "")
+    if(FUZZ_LINK_LIBRARIES)
+        _fuzzmate_collect_sources("${FUZZ_LINK_LIBRARIES}"
+            _dep_sources _absorbed_targets _visited_targets)
+    endif()
+
+    foreach(_s ${_dep_sources})
+        if(NOT "${_s}" IN_LIST _ABS_TARGETS)
+            # Generated sources (custom command outputs) in other CMake
+            # directories need their GENERATED property set explicitly —
+            # it is directory-scoped before CMake policy CMP0118.
+            if(NOT EXISTS "${_s}")
+                set_source_files_properties("${_s}" PROPERTIES GENERATED TRUE)
+            endif()
+            file(RELATIVE_PATH _rel "${CMAKE_SOURCE_DIR}" "${_s}")
+            list(APPEND _REL_TARGETS "${_rel}")
+            list(APPEND _ABS_TARGETS "${_s}")
+        endif()
     endforeach()
 
     # ── Step 1: OBJECT library (compile targets) ─────────────────────────
@@ -173,6 +261,29 @@ function(fuzzmate_add_fuzzer)
         FUZZMATE_SEED      "${_SEED_FILE}"
     )
 
+    # Absorbed targets may have generated sources (glyphs, mock syscall stubs,
+    # etc.) produced by custom commands.  The OBJECT library compilation
+    # triggers those custom commands implicitly (CMake tracks OUTPUT → source
+    # dependencies).  Explicit add_dependencies() on absorbed targets are
+    # transferred manually since they are not propagated via OBJECT-library
+    # source linkage.
+    #
+    # The generate step (fuzzmate parsing) must also wait for all generated
+    # headers to exist, so it depends on the OBJECT library being compiled.
+    add_dependencies(${_GENERATE_TARGET} ${_OBJ_LIB})
+
+    foreach(_tgt ${_absorbed_targets})
+        if(TARGET "${_tgt}")
+            get_target_property(_tgt_type "${_tgt}" TYPE)
+            if(NOT "${_tgt_type}" STREQUAL "INTERFACE_LIBRARY")
+                get_target_property(_manual_deps "${_tgt}" MANUALLY_ADDED_DEPENDENCIES)
+                if(_manual_deps)
+                    add_dependencies(${_OBJ_LIB} ${_manual_deps})
+                endif()
+            endif()
+        endif()
+    endforeach()
+
     # ── Step 3: Apply symbol redefinitions (objcopy) ─────────────────────
     # Mutates the OBJECT library's .o files in place.  The dependency chain
     # (obj lib + fuzzmate → redef → link) ensures objcopy finishes before
@@ -204,6 +315,15 @@ function(fuzzmate_add_fuzzer)
 
     # Link the (objcopy-mutated) object files from the OBJECT library.
     target_sources(${FUZZ_NAME} PRIVATE $<TARGET_OBJECTS:${_OBJ_LIB}>)
+
+    # When dependency sources are absorbed, the OBJECT library may contain
+    # both app and SDK definitions of the same function (the app intentionally
+    # overrides some SDK functions).  Allow multiple definitions so the first
+    # (app) version wins — matching the behavior of the original static-library
+    # link where archive members are only pulled for unresolved references.
+    if(_absorbed_targets)
+        target_link_options(${FUZZ_NAME} PRIVATE "LINKER:--allow-multiple-definition")
+    endif()
 
     # Link additional libraries (for the linker, not compilation).
     if(FUZZ_LINK_LIBRARIES)
