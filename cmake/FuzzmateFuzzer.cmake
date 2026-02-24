@@ -60,6 +60,9 @@
 #   _out_sources  — accumulated list of absolute source file paths
 #   _out_absorbed — accumulated list of CMake target names that were absorbed
 #   _visited      — bookkeeping set of already-visited target names
+#
+# See also _fuzzmate_collect_link_info() which walks the same tree to collect
+# compile properties and passthrough link dependencies.
 function(_fuzzmate_collect_sources _targets _out_sources _out_absorbed _visited)
     set(_srcs ${${_out_sources}})
     set(_abs  ${${_out_absorbed}})
@@ -110,6 +113,99 @@ function(_fuzzmate_collect_sources _targets _out_sources _out_absorbed _visited)
     set(${_out_sources}  "${_srcs}" PARENT_SCOPE)
     set(${_out_absorbed} "${_abs}"  PARENT_SCOPE)
     set(${_visited}      "${_vis}"  PARENT_SCOPE)
+endfunction()
+
+# ── Helper: collect compile/link properties and passthrough link deps ─
+# Walks the same target tree as _fuzzmate_collect_sources and collects:
+#   • INTERFACE_INCLUDE_DIRECTORIES, INTERFACE_COMPILE_DEFINITIONS,
+#     INTERFACE_COMPILE_OPTIONS, and INTERFACE_LINK_OPTIONS from every
+#     reachable target.
+#   • Non-target items (e.g. -lm) and IMPORTED targets that must still be
+#     passed to the linker (they are not absorbed into the OBJECT library).
+#
+# This allows the fuzzer executable to get the full set of compile and link
+# properties from LINK_LIBRARIES dependencies without actually linking the
+# absorbed targets' .a files (whose .o equivalents are already in the OBJECT
+# library).  In particular, INTERFACE_LINK_OPTIONS carries flags like
+# -fprofile-instr-generate and -fcoverage-mapping that must appear at link
+# time for the profiling runtime to be linked.
+function(_fuzzmate_collect_link_info
+        _targets _out_incs _out_defs _out_opts _out_link_opts
+        _out_passthrough _visited)
+    set(_incs  ${${_out_incs}})
+    set(_defs  ${${_out_defs}})
+    set(_opts  ${${_out_opts}})
+    set(_lopts ${${_out_link_opts}})
+    set(_pass  ${${_out_passthrough}})
+    set(_vis   ${${_visited}})
+
+    foreach(_item ${_targets})
+        if("${_item}" MATCHES "^\\$<")
+            continue()
+        endif()
+
+        if(NOT TARGET "${_item}")
+            list(APPEND _pass "${_item}")
+            continue()
+        endif()
+
+        if("${_item}" IN_LIST _vis)
+            continue()
+        endif()
+        list(APPEND _vis "${_item}")
+
+        get_target_property(_imported "${_item}" IMPORTED)
+
+        # Collect INTERFACE compile and link properties from every target.
+        get_target_property(_iincs "${_item}" INTERFACE_INCLUDE_DIRECTORIES)
+        if(_iincs)
+            list(APPEND _incs ${_iincs})
+        endif()
+        get_target_property(_idefs "${_item}" INTERFACE_COMPILE_DEFINITIONS)
+        if(_idefs)
+            list(APPEND _defs ${_idefs})
+        endif()
+        get_target_property(_iopts "${_item}" INTERFACE_COMPILE_OPTIONS)
+        if(_iopts)
+            list(APPEND _opts ${_iopts})
+        endif()
+        get_target_property(_ilopts "${_item}" INTERFACE_LINK_OPTIONS)
+        if(_ilopts)
+            list(APPEND _lopts ${_ilopts})
+        endif()
+
+        if(_imported)
+            list(APPEND _pass "${_item}")
+            get_target_property(_ideps "${_item}" INTERFACE_LINK_LIBRARIES)
+            if(_ideps)
+                _fuzzmate_collect_link_info("${_ideps}"
+                    _incs _defs _opts _lopts _pass _vis)
+            endif()
+            continue()
+        endif()
+
+        # Non-imported target — walk both LINK_LIBRARIES and INTERFACE deps.
+        get_target_property(_type "${_item}" TYPE)
+        if(NOT _type STREQUAL "INTERFACE_LIBRARY")
+            get_target_property(_deps "${_item}" LINK_LIBRARIES)
+            if(_deps)
+                _fuzzmate_collect_link_info("${_deps}"
+                    _incs _defs _opts _lopts _pass _vis)
+            endif()
+        endif()
+        get_target_property(_ideps "${_item}" INTERFACE_LINK_LIBRARIES)
+        if(_ideps)
+            _fuzzmate_collect_link_info("${_ideps}"
+                _incs _defs _opts _lopts _pass _vis)
+        endif()
+    endforeach()
+
+    set(${_out_incs}        "${_incs}"  PARENT_SCOPE)
+    set(${_out_defs}        "${_defs}"  PARENT_SCOPE)
+    set(${_out_opts}        "${_opts}"  PARENT_SCOPE)
+    set(${_out_link_opts}   "${_lopts}" PARENT_SCOPE)
+    set(${_out_passthrough} "${_pass}"  PARENT_SCOPE)
+    set(${_visited}         "${_vis}"   PARENT_SCOPE)
 endfunction()
 
 function(fuzzmate_add_fuzzer)
@@ -325,9 +421,39 @@ function(fuzzmate_add_fuzzer)
         target_link_options(${FUZZ_NAME} PRIVATE "LINKER:--allow-multiple-definition")
     endif()
 
-    # Link additional libraries (for the linker, not compilation).
+    # Propagate compile properties from LINK_LIBRARIES to the executable
+    # (for compiling fuzzer.c and the harness) without re-linking absorbed
+    # targets whose .o files are already provided by the OBJECT library.
     if(FUZZ_LINK_LIBRARIES)
-        target_link_libraries(${FUZZ_NAME} PRIVATE ${FUZZ_LINK_LIBRARIES})
+        set(_exe_incs "")
+        set(_exe_defs "")
+        set(_exe_opts "")
+        set(_exe_link_opts "")
+        set(_exe_passthrough "")
+        set(_link_visited "")
+        _fuzzmate_collect_link_info("${FUZZ_LINK_LIBRARIES}"
+            _exe_incs _exe_defs _exe_opts _exe_link_opts
+            _exe_passthrough _link_visited)
+
+        foreach(_inc ${_exe_incs})
+            target_include_directories(${FUZZ_NAME} PRIVATE "${_inc}")
+        endforeach()
+        foreach(_def ${_exe_defs})
+            target_compile_definitions(${FUZZ_NAME} PRIVATE "${_def}")
+        endforeach()
+        foreach(_opt ${_exe_opts})
+            target_compile_options(${FUZZ_NAME} PRIVATE "${_opt}")
+        endforeach()
+        foreach(_lopt ${_exe_link_opts})
+            target_link_options(${FUZZ_NAME} PRIVATE "${_lopt}")
+        endforeach()
+
+        # Link only passthrough items (imported targets, system libs).
+        # Absorbed targets are not linked — their .o files are already in
+        # the OBJECT library via $<TARGET_OBJECTS:...>.
+        foreach(_lib ${_exe_passthrough})
+            target_link_libraries(${FUZZ_NAME} PRIVATE "${_lib}")
+        endforeach()
     endif()
 
     # Include dirs for the fuzzer.c / harness compilation.
