@@ -183,7 +183,9 @@ pub fn writeFuzzerC(
 
         // Write extern decl
         // Note: we treat everything as byte array to avoid type issues in C
-        const decl = try std.fmt.allocPrint(allocator, "extern uint8_t {s}[{d}];\n", .{ mangled, g.size_bytes });
+        // Note: using weak attriute instead extern to allow the use of optimization flags like
+        // -O1/2/3/z that would remove some statement always pointed by value and not reference
+        const decl = try std.fmt.allocPrint(allocator, "uint8_t __attribute__((weak)) {s}[{d}];\n", .{ mangled, g.size_bytes });
         defer allocator.free(decl);
         try file.writeAll(decl);
     }
