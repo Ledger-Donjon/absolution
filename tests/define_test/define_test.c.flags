@@ -1,0 +1,4 @@
+# Compiler flags for the define_test integration test.
+# These define macros that affect struct layout and array size.
+-DHAS_EXTRA
+-DBUFFER_SIZE=32
