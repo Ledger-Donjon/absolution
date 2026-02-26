@@ -116,6 +116,8 @@ fn parseArgs(allocator: std.mem.Allocator) !Options {
 /// Entry point: parse CLI, collect globals, emit fuzzer sources, and seed file.
 pub fn main() !void {
     // Set up execution allocators
+    // Once 0.16.0 releases, let's migrate to the new big main method with
+    // allocator and IO initialization
     var gpa = std.heap.GeneralPurposeAllocator(.{ .stack_trace_frames = 8 }){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
@@ -127,13 +129,8 @@ pub fn main() !void {
     defer allocator.free(opts.targets);
     defer allocator.free(opts.cflags);
 
-    const parser = try fuzzmate.Parser.init(allocator, arena.allocator());
+    const parser = try fuzzmate.Parser.init(allocator, arena.allocator(), opts.cflags);
     defer parser.deinit();
-
-    // Process C compiler flags (e.g. -I, -D, -fshort-enums) via arocc's Driver.
-    if (opts.cflags.len > 0) {
-        try parser.addCFlags(opts.cflags);
-    }
 
     var globals = try parser.collect_all_globals(opts.targets, allocator);
     defer fuzzmate.Parser.free_globals(allocator, &globals);

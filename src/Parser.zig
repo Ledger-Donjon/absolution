@@ -36,10 +36,7 @@ toolchain: aro.Toolchain,
 builtin_source: ?aro.Source = null,
 compat_source: aro.Source,
 /// User -D/-U define text accumulated as `#define`/`#undef` lines by arocc's
-/// Driver.parseArgs().  Converted to a source via `addSourceFromOwnedBuffer`
-/// before the first call to `collect_all_globals`.
-macro_buf: std.ArrayList(u8) = .empty,
-/// Lazily-built source from `macro_buf`; null until the first parse.
+/// Driver.parseArgs().
 user_macro_source: ?aro.Source = null,
 initialized: bool = false,
 
@@ -47,7 +44,7 @@ initialized: bool = false,
 /// Args:
 ///   allocator: General-purpose allocator used for long-lived buffers.
 ///   arena: Short-lived arena used by aro internals.
-pub fn init(allocator: std.mem.Allocator, arena: std.mem.Allocator) !*Parser {
+pub fn init(allocator: std.mem.Allocator, arena: std.mem.Allocator, cflags: []const []const u8) !*Parser {
     const p = try allocator.create(Parser);
     errdefer allocator.destroy(p);
 
@@ -64,7 +61,6 @@ pub fn init(allocator: std.mem.Allocator, arena: std.mem.Allocator) !*Parser {
         .toolchain = undefined,
         .builtin_source = null,
         .compat_source = undefined,
-        .macro_buf = .empty,
         .user_macro_source = null,
         .initialized = false,
     };
@@ -121,6 +117,8 @@ pub fn init(allocator: std.mem.Allocator, arena: std.mem.Allocator) !*Parser {
         \\
     );
 
+    try p.addCFlags(cflags);
+    p.builtin_source = try p.driver.comp.generateBuiltinMacros(p.driver.system_defines);
     p.initialized = true;
 
     return p;
@@ -130,6 +128,7 @@ pub fn init(allocator: std.mem.Allocator, arena: std.mem.Allocator) !*Parser {
 /// Handles -I, -D, -f*, -std=, and other standard C compiler flags.
 /// Must be called after init() and before collect_all_globals().
 pub fn addCFlags(p: *Parser, cflags: []const []const u8) !void {
+    if (cflags.len == 0) return;
     // Driver.parseArgs expects argv format where index 0 is the program name.
     // Prepend a dummy program name so the flags start at index 1.
     var args = std.ArrayList([]const u8).empty;
@@ -139,8 +138,17 @@ pub fn addCFlags(p: *Parser, cflags: []const []const u8) !void {
 
     var stdout_buf: [0]u8 = undefined;
     var stdout: std.Io.Writer = .fixed(&stdout_buf);
+    var user_macro_buf: std.ArrayList(u8) = .empty;
+    defer user_macro_buf.deinit(p.comp.gpa);
     // Pass our macro_buf so -D/-U flags accumulate there for later use.
-    _ = try p.driver.parseArgs(&stdout, &p.macro_buf, args.items);
+    _ = try p.driver.parseArgs(&stdout, &user_macro_buf, args.items);
+    // Converted to a source via `addSourceFromOwnedBuffer`
+    // before the first call to `collect_all_globals`
+    p.user_macro_source = try p.comp.addSourceFromOwnedBuffer(
+        "<command line>",
+        try user_macro_buf.toOwnedSlice(p.comp.gpa),
+        .user,
+    );
 }
 
 /// Convert the accumulated `macro_buf` into an aro Source.
@@ -148,17 +156,7 @@ pub fn addCFlags(p: *Parser, cflags: []const []const u8) !void {
 /// were registered.  Mirrors aro's Driver pattern (`addSourceFromOwnedBuffer`).
 fn resolveUserMacros(p: *Parser) !?aro.Source {
     if (p.user_macro_source) |s| return s;
-    if (p.macro_buf.items.len == 0) return null;
-
-    const contents = try p.macro_buf.toOwnedSlice(p.allocator);
-    errdefer p.allocator.free(contents);
-
-    p.user_macro_source = try p.comp.addSourceFromOwnedBuffer(
-        "<command line>",
-        contents,
-        .user,
-    );
-    return p.user_macro_source;
+    return null;
 }
 
 /// Tear down toolchain state and diagnostics if previously initialized.
@@ -168,7 +166,6 @@ pub fn deinit(p: *Parser) void {
         p.toolchain.deinit();
         p.driver.deinit();
     }
-    p.macro_buf.deinit(p.allocator);
     p.comp.deinit();
     p.diagnostics.deinit();
 
@@ -204,12 +201,6 @@ fn isEffectivelyConst(comp: *aro.Compilation, qt: aro.QualType) bool {
 /// leaks between translation units.  The `aro.Compilation` caches
 /// source file contents, keeping I/O minimal.
 pub fn collect_all_globals(p: *Parser, paths: []const []const u8, allocator: std.mem.Allocator) !std.ArrayList(ParsedGlobal) {
-    // Generate builtin macros on first parse. This is done lazily so that
-    // addCFlags() (which may change -std=) is called first.
-    if (p.builtin_source == null) {
-        p.builtin_source = try p.driver.comp.generateBuiltinMacros(p.driver.system_defines);
-    }
-
     const user_macros = try p.resolveUserMacros();
 
     var globals = std.ArrayList(ParsedGlobal).empty;
