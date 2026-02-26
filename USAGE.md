@@ -34,14 +34,23 @@ POSITIONAL (after '--'):
 ### Step 1: Create your targets file
 
 Your targets file contains the globals you want to fuzz:
-
 ```c
-// targets.c
+// targets.h
 typedef struct {
     int value;
     char flags;
 } Config;
 
+void process_config(void);
+```
+
+
+```c
+#include targets.h
+// targets.c
+
+
+// Because it is not `const` it will be collected by fuzzmate
 Config config;
 
 void process_config(void) {
@@ -58,18 +67,20 @@ expects `AbsolutionTestOneInput`, but you can choose any name with `--entry`:
 
 ```c
 // harness.c
-#include "targets.c"
+#include "targets.h"
 
 int MyTestOneInput(const uint8_t *data, size_t size) {
+    // For this test we only rely on fuzzmate behavior
+    // but you can use data and size to fuzz parameters
     process_config();
-    return 0;  // Return -1 to skip post-call invariant check
+    return 0;
 }
 ```
 
 ### Step 3: Generate the fuzzer
 
 ```bash
-./zig-out/bin/fuzzmate \
+fuzzmate \
   -t targets.c \
   --out fuzzer.c \
   --redef fuzzer.redef \
@@ -81,11 +92,13 @@ int MyTestOneInput(const uint8_t *data, size_t size) {
 If your targets need include paths or preprocessor defines, pass them after `--`:
 
 ```bash
-./zig-out/bin/fuzzmate \
-  -t src/module_a.c -t src/module_b.c \
+fuzzmate \
+  -t targets.c \
   --out fuzzer.c \
   --redef fuzzer.redef \
+  --seed fuzzer.seed \
   --entry MyTestOneInput \
+  --zon module.zon  # Optional: export parsed structure
   -- -I include/ -DMAX_ITEMS=64
 ```
 
@@ -260,12 +273,12 @@ LibFuzzer entrypoint that:
 
 ```bash
 # Generate with auto-detected domains
-./zig-out/bin/fuzzmate -t targets.c --zon module.zon --out fuzzer.c --redef fuzzer.redef
+fuzzmate -t targets.c --zon targets.zon --out fuzzer.c --redef fuzzer.redef
 
-# Edit module.zon to constrain domains...
+# Edit targets.zon to constrain domains...
 
 # Regenerate with constraints applied
-./zig-out/bin/fuzzmate -t targets.c --invariant module.zon --out fuzzer.c --redef fuzzer.redef
+fuzzmate -t targets.c --invariant targets.zon --out fuzzer.c --redef fuzzer.redef
 ```
 
 ### Pointer domain validation
@@ -280,14 +293,14 @@ Return `-1` from your harness function to skip the post-call invariant check. Us
 
 ## CMake Integration
 
-Fuzzmate includes CMake modules installed to `lib/cmake/Fuzzmate/`. After
-building fuzzmate with `zig build`, point CMake at the install prefix:
+Fuzzmate includes CMake modules installed to `lib/cmake/Fuzzmate/`.
+Point CMake at the install prefix:
 
 ```bash
 cmake -B build -G Ninja \
     -DENABLE_FUZZING=ON \
     -DCMAKE_C_COMPILER=clang \
-    -DFuzzmate_DIR=/path/to/fuzzmate/zig-out/lib/cmake/Fuzzmate
+    -DFuzzmate_DIR=/path/to/fuzzmate/release/lib/cmake/Fuzzmate
 
 cmake --build build --target my_fuzzer
 ```

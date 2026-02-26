@@ -1,6 +1,6 @@
 # Fuzzmate
 
-Fuzzmate lets you specify an invariant for a program's global state and fuzz its entrypoints from states uniformly sampled from that invariant. This helps surface bugs in any interleaving of calls, assuming the fuzzer can explore the space sufficiently.
+Fuzzmate lets you specify an invariant for a program’s global state and fuzz its entrypoints from states uniformly sampled from that invariant. This helps surface bugs in any interleaving of calls, assuming the fuzzer can explore the space sufficiently.
 
 ## How it works
 
@@ -73,8 +73,8 @@ working example with multiple translation units.
 ## Testing
 
 ```bash
-zig build test    # Run unit tests
-zig build it      # Run integration tests (golden .zon comparison)
+zig build test                # Run unit tests
+bash scripts/integration.sh   # In depth integration tests
 ```
 
 ## Documentation

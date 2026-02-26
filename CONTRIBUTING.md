@@ -7,22 +7,22 @@ This guide explains the code organization and development workflow for fuzzmate.
 ```
 fuzzmate/
 ├── src/
-│   ├── main.zig           # CLI entrypoint and argument parsing
-│   ├── root.zig           # Library exports (Parser, cgen, invariant)
-│   ├── Parser.zig         # C parsing via aro, global/field extraction
-│   ├── invariant.zig      # .zon invariant loading and application
-│   ├── integration_test.zig   # Integration test runner
+│   ├── main.zig              # CLI entrypoint and argument parsing
+│   ├── root.zig              # Library exports (Parser, cgen, invariant)
+│   ├── Parser.zig            # C parsing via aro, global/field extraction
+│   ├── invariant.zig         # .zon invariant loading and application
+│   ├── integration_test.zig  # Integration test runner
 │   └── cgen/
-│       ├── tree.zig       # Core data structures (Domain, Field, Global)
-│       ├── builder.zig    # File writing utilities
-│       └── emit.zig       # C code generation (sampler, checker, entrypoint)
-├── tests/                 # Integration test cases
+│       ├── tree.zig          # Core data structures (Domain, Field, Global)
+│       ├── builder.zig       # File writing utilities
+│       └── emit.zig          # C code generation (sampler, checker, entrypoint)
+├── tests/                    # Integration test cases
 │   └── <test_name>/
-│       ├── <file>.c       # Test input
-│       └── <file>.c.zon   # Golden output
+│       ├── <file>.c          # Test input
+│       └── <file>.c.zon      # Golden output
 ├── scripts/
-│   └── integration.sh     # Shell-based integration test runner
-└── build.zig              # Build configuration
+│   └── integration.sh        # Shell-based integration test runner
+└── build.zig                 # Build configuration
 ```
 
 ## Module Responsibilities
@@ -78,9 +78,8 @@ zig build run -- --help      # Build and run with args
 
 ```bash
 zig build test               # Unit tests (in-source)
-zig build it                 # Integration tests (golden comparison)
 zig build test --summary all # Verbose unit test output
-zig build it --summary all   # Verbose integration test output
+bash scripts/integration.sh  # Integration tests
 ```
 
 ### Adding a new test case
@@ -104,16 +103,11 @@ zig build it --summary all   # Verbose integration test output
    # Verify the output is correct
    ```
 
-4. Add the test case to `src/integration_test.zig`:
-   ```zig
-   test "my_test" {
-       try runGoldenTest("my_test", "myfile.c");
-   }
-   ```
+4. Script should be automaticaly discovering the new tests
 
 5. Run to verify:
    ```bash
-   zig build it
+   bash scripts/integration.sh
    ```
 
 ## Architecture Notes
@@ -168,4 +162,4 @@ Fuzzmate is completely self-contained at runtime. It uses:
 - The bundled aro library for C parsing and preprocessing
 - Bundled sysroot headers copied at build time to `zig-out/lib/`
 
-No external tools (zig, clang, gcc) are required at runtime. See `.cursor/skills/self-contained/SKILL.md` for detailed guidance.
+No external tools (zig, clang, gcc) are required at runtime.
