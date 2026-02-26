@@ -160,6 +160,12 @@ pub fn writeFuzzerC(
     defer allocator.free(fwd_decl);
     try file.writeAll(fwd_decl);
 
+    // Expose the total global-state byte count so custom mutators know
+    // where the APDU payload begins in the flat fuzzer input.
+    const globals_size_define = try std.fmt.allocPrint(allocator, "#define FUZZMATE_GLOBALS_SIZE {d}\n\n", .{needed_bytes});
+    defer allocator.free(globals_size_define);
+    try file.writeAll(globals_size_define);
+
     for (globals) |g| {
         // Skip static variables from header files - they don't produce object
         // files, so objcopy can't rename them. Including them would cause
@@ -192,7 +198,7 @@ pub fn writeFuzzerC(
 
     try file.writeAll("\n");
 
-    try emitSampler(allocator, globals, needed_bytes, &file);
+    try emitSampler(allocator, globals, &file);
     try emitChecker(allocator, globals, &file);
     try emitEntrypoint(allocator, &file, entry_name);
 }
@@ -201,18 +207,15 @@ pub fn writeFuzzerC(
 /// Args:
 ///   module: Flattened module describing globals/fields.
 ///   file: Output file handle for C emission.
-fn emitSampler(allocator: std.mem.Allocator, globals: []const Parser.ParsedGlobal, needed_bytes: usize, file: *std.fs.File) !void {
+fn emitSampler(allocator: std.mem.Allocator, globals: []const Parser.ParsedGlobal, file: *std.fs.File) !void {
     var num_buf: [64]u8 = undefined;
     var bytes_buf: [64]u8 = undefined;
-    const needed_str = try std.fmt.bufPrint(&num_buf, "{d}", .{needed_bytes});
 
     var value_idx: usize = 0;
     var ptr_idx: usize = 0;
     try file.writeAll("ptrdiff_t sample_invariant(const uint8_t *data, size_t size) {\n");
     try file.writeAll("    size_t off = 0;\n");
-    try file.writeAll("    const size_t needed = ");
-    try file.writeAll(needed_str);
-    try file.writeAll(";\n");
+    try file.writeAll("    const size_t needed = FUZZMATE_GLOBALS_SIZE ;\n");
     try file.writeAll("    if (size < needed) return -1;\n");
 
     for (globals) |g| {
