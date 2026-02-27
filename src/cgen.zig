@@ -38,7 +38,7 @@ pub fn generateFuzzer(
     try Emit.writeFuzzerC(allocator, globals.items, needed_bytes, out_c_path, redef_path, entry_name);
 
     if (zon_path) |zp| {
-        var aw = std.Io.Writer.Allocating.init(allocator);
+        var aw: std.Io.Writer.Allocating = .init(allocator);
         try std.zon.stringify.serialize(globals.items, .{ .whitespace = true }, &aw.writer);
         try aw.writer.writeByte('\n'); // Ensure trailing newline
         const zon_bytes = try aw.toOwnedSlice();

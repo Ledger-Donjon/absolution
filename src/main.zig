@@ -121,7 +121,7 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{ .stack_trace_frames = 8 }){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
-    var arena = std.heap.ArenaAllocator.init(allocator);
+    var arena: std.heap.ArenaAllocator = .init(allocator);
     defer arena.deinit();
 
     // Get user options
@@ -129,10 +129,10 @@ pub fn main() !void {
     defer allocator.free(opts.targets);
     defer allocator.free(opts.cflags);
 
-    const parser = try fuzzmate.Parser.init(allocator, arena.allocator(), opts.cflags);
+    const parser = try fuzzmate.Parser.new(allocator, arena.allocator(), opts.cflags);
     defer parser.deinit();
 
-    var globals = try parser.collect_all_globals(opts.targets, allocator);
+    var globals = try parser.collectGlobals(opts.targets, allocator);
     defer fuzzmate.Parser.free_globals(allocator, &globals);
 
     var inv: ?invariant.Invariant = null;

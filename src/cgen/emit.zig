@@ -134,7 +134,7 @@ fn emitOffsetCalc(
 /// Generate the C sampler, checker, and libFuzzer entrypoint.
 pub fn writeFuzzerC(
     allocator: std.mem.Allocator,
-    globals: []const Parser.ParsedGlobal,
+    globals: []const Parser.Global,
     needed_bytes: usize,
     out_path: []const u8,
     redef_path: []const u8,
@@ -207,7 +207,7 @@ pub fn writeFuzzerC(
 /// Args:
 ///   module: Flattened module describing globals/fields.
 ///   file: Output file handle for C emission.
-fn emitSampler(allocator: std.mem.Allocator, globals: []const Parser.ParsedGlobal, file: *std.fs.File) !void {
+fn emitSampler(allocator: std.mem.Allocator, globals: []const Parser.Global, file: *std.fs.File) !void {
     var num_buf: [64]u8 = undefined;
     var bytes_buf: [64]u8 = undefined;
 
@@ -242,7 +242,7 @@ fn emitSampler(allocator: std.mem.Allocator, globals: []const Parser.ParsedGloba
         try emitMemset(file, 1, memset_dst, "0", memset_size);
 
         // Open global loops once per global.
-        var loop_stack = LoopStack.init(file, 1);
+        var loop_stack: LoopStack = .init(file, 1);
         for (g.dims, 0..) |d, i| {
             try loop_stack.openLoop(d, i);
         }
@@ -351,7 +351,7 @@ fn emitSampler(allocator: std.mem.Allocator, globals: []const Parser.ParsedGloba
 }
 
 /// Emit the checker that enforces padding bytes stay zeroed.
-fn emitChecker(allocator: std.mem.Allocator, globals: []const Parser.ParsedGlobal, file: *std.fs.File) !void {
+fn emitChecker(allocator: std.mem.Allocator, globals: []const Parser.Global, file: *std.fs.File) !void {
     var bytes_buf: [64]u8 = undefined;
 
     try file.writeAll("int check_invariant(void) {\n");
@@ -371,7 +371,7 @@ fn emitChecker(allocator: std.mem.Allocator, globals: []const Parser.ParsedGloba
         defer allocator.free(mangled);
 
         // Open global loops once per global.
-        var loop_stack = LoopStack.init(file, 1);
+        var loop_stack: LoopStack = .init(file, 1);
         for (g.dims, 0..) |d, i| {
             try loop_stack.openLoop(d, i);
         }

@@ -46,16 +46,16 @@ pub fn loadZon(allocator: std.mem.Allocator, path: []const u8) !Invariant {
 ///   inv: Invariant describing expected domains for globals and fields.
 pub fn applyToGlobals(
     allocator: std.mem.Allocator,
-    globals: *std.ArrayList(Parser.ParsedGlobal),
+    globals: *std.ArrayList(Parser.Global),
     inv: Invariant,
 ) !void {
     // Build map of existing globals for fast lookup
-    var global_map = std.StringHashMap(*Parser.ParsedGlobal).init(allocator);
+    var global_map: std.StringHashMap(*Parser.Global) = .init(allocator);
     defer global_map.deinit();
     try global_map.ensureTotalCapacity(@intCast(globals.items.len));
 
     // Also build symbols set for pointer validation
-    var symbols = std.StringHashMap(void).init(allocator);
+    var symbols: std.StringHashMap(void) = .init(allocator);
     defer symbols.deinit();
     try symbols.ensureTotalCapacity(@intCast(globals.items.len));
 
@@ -65,10 +65,11 @@ pub fn applyToGlobals(
     }
 
     for (inv.globals) |g| {
+        // we do not crash if an invariant does not exists
         const target = global_map.get(g.name) orelse continue;
 
         // Build field map for this global
-        var field_map = std.StringHashMap(*Parser.ParsedField).init(allocator);
+        var field_map: std.StringHashMap(*Parser.Field) = .init(allocator);
         defer field_map.deinit();
         try field_map.ensureTotalCapacity(@intCast(target.fields.len));
 
@@ -118,10 +119,10 @@ pub fn applyToGlobals(
 test "applyToGlobals updates domains" {
     const allocator = std.testing.allocator;
 
-    var globals = std.ArrayList(Parser.ParsedGlobal).empty;
+    var globals = std.ArrayList(Parser.Global).empty;
     defer Parser.free_globals(allocator, &globals);
 
-    const global_fields = try allocator.alloc(Parser.ParsedField, 1);
+    const global_fields = try allocator.alloc(Parser.Field, 1);
     global_fields[0] = .{
         .name = try allocator.dupe(u8, "."),
         .bit_width = 8,

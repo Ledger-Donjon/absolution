@@ -13,10 +13,10 @@ const type_flatten = @import("type_flatten.zig");
 const ParseError = std.mem.Allocator.Error;
 
 pub const Domain = cgen_tree.Domain;
-pub const ParsedField = cgen_tree.Field;
-pub const ParsedGlobal = cgen_tree.Global;
+pub const Field = cgen_tree.Field;
+pub const Global = cgen_tree.Global;
 
-const FieldsBuilder = std.ArrayListUnmanaged(ParsedField);
+const FieldsBuilder = std.ArrayListUnmanaged(Field);
 
 /// C parser built on aro, specialized for extracting global variables.
 ///
@@ -44,7 +44,7 @@ initialized: bool = false,
 /// Args:
 ///   allocator: General-purpose allocator used for long-lived buffers.
 ///   arena: Short-lived arena used by aro internals.
-pub fn init(allocator: std.mem.Allocator, arena: std.mem.Allocator, cflags: []const []const u8) !*Parser {
+pub fn new(allocator: std.mem.Allocator, arena: std.mem.Allocator, cflags: []const []const u8) !*Parser {
     const p = try allocator.create(Parser);
     errdefer allocator.destroy(p);
 
@@ -53,7 +53,7 @@ pub fn init(allocator: std.mem.Allocator, arena: std.mem.Allocator, cflags: []co
         .allocator = allocator,
         .arena = arena,
         .diagnostics = .{
-            .output = .{ .to_list = .{ .arena = std.heap.ArenaAllocator.init(allocator) } },
+            .output = .{ .to_list = .{ .arena = .init(allocator) } },
             .state = .{ .enable_all_warnings = false },
         },
         .comp = undefined,
@@ -102,7 +102,7 @@ pub fn init(allocator: std.mem.Allocator, arena: std.mem.Allocator, cflags: []co
     p.driver.nobuiltininc = true;
 
     // Configure include search order from the bundled sysroot.
-    try include_paths.addZigCcImplicitIncludes(&p.comp, resource_dir_dupe);
+    try include_paths.addZigCcImplicitIncludes(p.driver.comp, resource_dir_dupe);
 
     // Note: builtin_source is generated lazily in collect_all_globals(),
     // after addCFlags() has been called, so -std= takes effect first.
@@ -119,7 +119,6 @@ pub fn init(allocator: std.mem.Allocator, arena: std.mem.Allocator, cflags: []co
 
     try p.addCFlags(cflags);
     p.builtin_source = try p.driver.comp.generateBuiltinMacros(p.driver.system_defines);
-    p.initialized = true;
 
     return p;
 }
@@ -138,34 +137,21 @@ pub fn addCFlags(p: *Parser, cflags: []const []const u8) !void {
 
     var stdout_buf: [0]u8 = undefined;
     var stdout: std.Io.Writer = .fixed(&stdout_buf);
-    var user_macro_buf: std.ArrayList(u8) = .empty;
-    defer user_macro_buf.deinit(p.comp.gpa);
+    var user_macro: std.ArrayList(u8) = .empty;
+    defer user_macro.deinit(p.comp.gpa);
     // Pass our macro_buf so -D/-U flags accumulate there for later use.
-    _ = try p.driver.parseArgs(&stdout, &user_macro_buf, args.items);
-    // Converted to a source via `addSourceFromOwnedBuffer`
-    // before the first call to `collect_all_globals`
-    p.user_macro_source = try p.comp.addSourceFromOwnedBuffer(
-        "<command line>",
-        try user_macro_buf.toOwnedSlice(p.comp.gpa),
-        .user,
-    );
-}
-
-/// Convert the accumulated `macro_buf` into an aro Source.
-/// Returns the cached source on subsequent calls, or null when no defines
-/// were registered.  Mirrors aro's Driver pattern (`addSourceFromOwnedBuffer`).
-fn resolveUserMacros(p: *Parser) !?aro.Source {
-    if (p.user_macro_source) |s| return s;
-    return null;
+    _ = try p.driver.parseArgs(&stdout, &user_macro, args.items);
+    const user_macro_buf = try user_macro.toOwnedSlice(p.allocator);
+    defer p.allocator.free(user_macro_buf);
+    // Converted to a source via `addSourceFromBuffer`
+    p.user_macro_source = try p.comp.addSourceFromBuffer("<command line>", user_macro_buf);
 }
 
 /// Tear down toolchain state and diagnostics if previously initialized.
 /// Safe to call exactly once per `init`.
 pub fn deinit(p: *Parser) void {
-    if (p.initialized) {
-        p.toolchain.deinit();
-        p.driver.deinit();
-    }
+    p.toolchain.deinit();
+    p.driver.deinit();
     p.comp.deinit();
     p.diagnostics.deinit();
 
@@ -173,7 +159,7 @@ pub fn deinit(p: *Parser) void {
     allocator.destroy(p);
 }
 
-pub fn free_globals(allocator: std.mem.Allocator, globals: *std.ArrayList(ParsedGlobal)) void {
+pub fn free_globals(allocator: std.mem.Allocator, globals: *std.ArrayList(Global)) void {
     for (globals.items) |*g| g.deinit(allocator);
     globals.deinit(allocator);
 }
@@ -200,49 +186,10 @@ fn isEffectivelyConst(comp: *aro.Compilation, qt: aro.QualType) bool {
 /// Each file is parsed in its own Preprocessor so that no aro state
 /// leaks between translation units.  The `aro.Compilation` caches
 /// source file contents, keeping I/O minimal.
-pub fn collect_all_globals(p: *Parser, paths: []const []const u8, allocator: std.mem.Allocator) !std.ArrayList(ParsedGlobal) {
-    const user_macros = try p.resolveUserMacros();
+pub fn collectGlobals(p: *Parser, paths: []const []const u8, allocator: std.mem.Allocator) !std.ArrayList(Global) {
+    const user_macros = p.user_macro_source;
 
-    var globals = std.ArrayList(ParsedGlobal).empty;
-    errdefer free_globals(allocator, &globals);
-
-    // Track non-static globals already collected so that the same linker
-    // symbol appearing in multiple translation units is emitted only once.
-    var seen_globals = std.StringHashMap([]const u8).init(allocator);
-    defer seen_globals.deinit();
-
-    for (paths, 0..) |path, i| {
-        var timer = std.time.Timer.start() catch unreachable;
-        std.debug.print("[fuzzmate] [{d}/{d}] {s} START\n", .{
-            i + 1,
-            paths.len,
-            path,
-        });
-        try p.collectGlobalsFromFile(path, user_macros, allocator, &globals, &seen_globals);
-        const elapsed = timer.read();
-        std.debug.print("[fuzzmate] [{d}/{d}] {s} in {d}ms\n", .{
-            i + 1,
-            paths.len,
-            path,
-            elapsed / std.time.ns_per_ms,
-        });
-    }
-    return globals;
-}
-
-/// Parse a single translation unit and append its globals.
-/// Non-static globals that have already been seen (tracked via `seen_globals`)
-/// are skipped to avoid duplicate extern declarations in the generated fuzzer.
-fn collectGlobalsFromFile(
-    p: *Parser,
-    path: []const u8,
-    user_macros: ?aro.Source,
-    allocator: std.mem.Allocator,
-    globals: *std.ArrayList(ParsedGlobal),
-    seen_globals: *std.StringHashMap([]const u8),
-) !void {
-    // Build source list: [empty_main, builtins, compat, user_macros, target]
-    var source_list = std.ArrayList(aro.Source).empty;
+    var source_list: std.ArrayList(aro.Source) = .empty;
     defer source_list.deinit(allocator);
 
     const empty_main = try p.comp.addSourceFromBuffer("<fuzzmate>", "\n");
@@ -253,45 +200,47 @@ fn collectGlobalsFromFile(
         try source_list.append(allocator, um);
     }
 
-    const src = try p.driver.comp.addSourceFromPath(path);
-    try source_list.append(allocator, src);
+    for (paths) |path| {
+        const src = try p.driver.comp.addSourceFromPath(path);
+        try source_list.append(allocator, src);
+    }
 
     var pp = try aro.Preprocessor.initDefault(p.driver.comp);
     defer pp.deinit();
     pp.preprocessSources(source_list.items) catch |err| {
-        p.printDiagnostics();
+        printDiagnostics(p.driver.comp);
         return err;
     };
 
     var tree = try pp.parse();
     defer tree.deinit();
 
-    // Collect typedef names to filter out variables that shadow them.
-    var typedef_names = std.StringHashMap(void).init(allocator);
-    defer typedef_names.deinit();
-    for (tree.root_decls.items) |idx| {
-        const node = idx.get(&tree);
-        switch (node) {
-            .typedef => |td| {
-                const name = tree.tokSlice(td.name_tok);
-                try typedef_names.put(name, {});
-            },
-            else => {},
-        }
-    }
+    return try collectGlobalsFromTree(p.driver.comp, tree, allocator);
+}
 
+/// Go through an entire Tree and extracts its globals.
+/// Non-static globals that have already been seen (tracked via `seen_globals`)
+/// are skipped to avoid duplicate extern declarations in the generated fuzzer.
+fn collectGlobalsFromTree(comp: *aro.Compilation, tree: aro.Tree, allocator: std.mem.Allocator) !std.ArrayList(Global) {
+    var globals: std.ArrayList(Global) = .empty;
+    errdefer free_globals(allocator, &globals);
+
+    // Track non-static globals already collected so that the same linker
+    // symbol appearing in multiple translation units is emitted only once.
+    var seen_globals: std.StringHashMap([]const u8) = .init(allocator);
+    defer seen_globals.deinit();
     for (tree.root_decls.items) |idx| {
         const node = idx.get(&tree);
         switch (node) {
             .variable => |variable| {
                 const loc = tree.tokens.items(.loc)[variable.name_tok];
-                const expanded = loc.expand(p.driver.comp);
+                const expanded = loc.expand(comp);
                 if (expanded.kind != .user) continue;
                 if (isEffectivelyConst(tree.comp, variable.qt)) continue;
                 if (variable.qt.hasIncompleteSize(tree.comp)) continue;
 
-                const name_slice = tree.tokSlice(variable.name_tok);
-                if (typedef_names.contains(name_slice)) continue;
+                //const name_slice = tree.tokSlice(variable.name_tok);
+                // if (typedef_names.contains(name_slice)) continue;
 
                 // Heuristic: skip variables that look like parsing artifacts.
                 if (variable.initializer == null and variable.definition == null and
@@ -303,29 +252,27 @@ fn collectGlobalsFromFile(
                     }
                 }
 
-                const source_file_path = expanded.path;
-                const copied_source_file = try allocator.dupe(u8, source_file_path);
-                errdefer allocator.free(copied_source_file);
+                const source_path = try allocator.dupe(u8, expanded.path);
+                errdefer allocator.free(source_path);
 
-                const copied_name = try allocator.dupe(u8, name_slice);
-                errdefer allocator.free(copied_name);
-
-                const is_static = variable.storage_class == .static;
+                const name_slice = try allocator.dupe(u8, tree.tokSlice(variable.name_tok));
+                errdefer allocator.free(name_slice);
 
                 // Non-static globals share a single linker symbol across all
                 // translation units.  If we already collected one with this
                 // name, skip the duplicate and warn.
-                if (!is_static) {
+                if (variable.storage_class != .static) {
                     if (seen_globals.get(name_slice)) |first_file| {
                         std.debug.print(
                             "[fuzzmate] warning: duplicate non-static global '{s}' in {s} " ++
                                 "(first seen in {s}) — skipped\n",
-                            .{ name_slice, source_file_path, first_file },
+                            .{ name_slice, source_path, first_file },
                         );
-                        allocator.free(copied_source_file);
-                        allocator.free(copied_name);
+                        allocator.free(source_path);
+                        allocator.free(name_slice);
                         continue;
                     }
+                    try seen_globals.put(name_slice, source_path);
                 }
 
                 const size_val = variable.qt.sizeofOrNull(tree.comp);
@@ -335,29 +282,20 @@ fn collectGlobalsFromFile(
                 const peeled = try type_flatten.peelTopLevelArrayDims(allocator, tree, variable.qt);
                 errdefer allocator.free(peeled.dims);
 
-                var fields_builder = FieldsBuilder{};
-                errdefer {
-                    for (fields_builder.items) |*f| f.deinit(allocator);
-                    fields_builder.deinit(allocator);
-                }
+                var fields_builder: std.ArrayList(Field) = .empty;
+                errdefer fields_builder.deinit(allocator);
+                errdefer for (fields_builder.items) |*f| f.deinit(allocator);
 
                 try type_flatten.flattenGlobal(allocator, tree, peeled.qt, &fields_builder);
 
                 const fields = try fields_builder.toOwnedSlice(allocator);
-                errdefer {
-                    for (fields) |*f| f.deinit(allocator);
-                    allocator.free(fields);
-                }
-
-                if (!is_static) {
-                    try seen_globals.put(name_slice, copied_source_file);
-                }
+                errdefer allocator.free(fields);
 
                 try globals.append(allocator, .{
-                    .name = copied_name,
-                    .source_file = copied_source_file,
+                    .name = name_slice,
+                    .source_file = source_path,
                     .size_bytes = size_bytes,
-                    .is_static = is_static,
+                    .is_static = variable.storage_class == .static,
                     .dims = peeled.dims,
                     .fields = fields,
                 });
@@ -365,14 +303,16 @@ fn collectGlobalsFromFile(
             else => {},
         }
     }
+
+    return globals;
 }
 
 /// Print accumulated aro diagnostics to stdout.
-fn printDiagnostics(p: *Parser) void {
+fn printDiagnostics(comp: *aro.Compilation) void {
     var stdout_buf: [1024]u8 = undefined;
     var stdout = std.fs.File.stdout().writer(&stdout_buf);
     defer _ = stdout.interface.flush() catch {};
-    for (p.driver.comp.diagnostics.output.to_list.messages.items) |msg| {
+    for (comp.diagnostics.output.to_list.messages.items) |msg| {
         msg.write(&stdout.interface, .escape_codes, true) catch {};
     }
 }
