@@ -8,55 +8,110 @@ const tree = @import("cgen/tree.zig");
 const Parser = @import("Parser.zig");
 
 /// Parsed invariant specification containing domain constraints for globals.
+/// Owns all memory in `globals`.
 pub const Invariant = struct {
     globals: []tree.Global,
 
+    /// Caller must pass the same allocator used in `loadZon`.
     pub fn deinit(self: Invariant, allocator: std.mem.Allocator) void {
         for (self.globals) |*g| g.deinit(allocator);
         allocator.free(self.globals);
     }
 };
 
-/// Load an invariant from a `.zon` file, duplicating all strings for ownership.
-/// Args:
-///   allocator: Allocator used for all cloned data.
-///   path: Path to the `.zon` file on disk.
+/// Load an invariant from a `.zon` file.
+/// All returned memory is owned by the caller through `Invariant`.
 pub fn loadZon(allocator: std.mem.Allocator, path: []const u8) !Invariant {
-    const raw = try std.fs.cwd().readFileAlloc(allocator, path, std.math.maxInt(usize));
-    defer allocator.free(raw);
-    const bytes = try allocator.allocSentinel(u8, raw.len, 0);
+    const bytes = try std.fs.cwd().readFileAllocOptions(
+        allocator,
+        path,
+        std.math.maxInt(usize),
+        null,
+        std.mem.Alignment.@"8",
+        0,
+    );
     defer allocator.free(bytes);
-    @memcpy(bytes, raw);
 
     var diag: std.zon.parse.Diagnostics = .{};
     defer diag.deinit(allocator);
 
-    // Parse root as an array of globals; reject stray keys for a tighter format.
-    const parsed = try std.zon.parse.fromSlice([]tree.Global, allocator, bytes, &diag, .{
-        .ignore_unknown_fields = false,
-    });
+    const parsed = try std.zon.parse.fromSlice(
+        []tree.Global,
+        allocator,
+        bytes,
+        &diag,
+        .{ .ignore_unknown_fields = false },
+    );
 
     return .{ .globals = parsed };
 }
 
-/// Apply invariant domains directly to parsed globals, validating pointer targets.
-/// Args:
-///   allocator: Allocator used for any temporary storage during application.
-///   globals: Parsed globals to update in-place.
-///   inv: Invariant describing expected domains for globals and fields.
+/// Clone a domain into `allocator`.
+/// Returns newly allocated domain and marks ownership.
+fn cloneDomain(
+    allocator: std.mem.Allocator,
+    domain: tree.Domain,
+) !struct {
+    domain: Parser.Domain,
+    owned: bool,
+} {
+    return switch (domain) {
+        .top => .{
+            .domain = .top,
+            .owned = false,
+        },
+
+        .values => |vals| blk: {
+            const dup_vals = try allocator.alloc([]const u8, vals.len);
+            errdefer allocator.free(dup_vals);
+
+            for (vals, 0..) |v, i| {
+                dup_vals[i] = try allocator.dupe(u8, v);
+                errdefer allocator.free(dup_vals[i]);
+            }
+
+            break :blk .{
+                .domain = .{ .values = dup_vals },
+                .owned = true,
+            };
+        },
+
+        .pointers => |ptrs| blk: {
+            const dup_ptrs = try allocator.alloc([]const u8, ptrs.len);
+            errdefer allocator.free(dup_ptrs);
+
+            for (ptrs, 0..) |p, i| {
+                dup_ptrs[i] = try allocator.dupe(u8, p);
+                errdefer allocator.free(dup_ptrs[i]);
+            }
+
+            break :blk .{
+                .domain = .{ .pointers = dup_ptrs },
+                .owned = true,
+            };
+        },
+    };
+}
+
+/// Apply invariant domains to parsed globals.
+/// Mutates `globals` in-place.
+///
+/// Ownership rules:
+/// - Newly cloned domains become owned by `Parser.Field`.
+/// - Previous owned domains are freed before replacement.
 pub fn applyToGlobals(
     allocator: std.mem.Allocator,
     globals: *std.ArrayList(Parser.Global),
     inv: Invariant,
 ) !void {
-    // Build map of existing globals for fast lookup
-    var global_map: std.StringHashMap(*Parser.Global) = .init(allocator);
+    // Build symbol table and global lookup.
+    var global_map = std.StringHashMap(*Parser.Global).init(allocator);
     defer global_map.deinit();
-    try global_map.ensureTotalCapacity(@intCast(globals.items.len));
 
-    // Also build symbols set for pointer validation
-    var symbols: std.StringHashMap(void) = .init(allocator);
+    var symbols = std.StringHashMap(void).init(allocator);
     defer symbols.deinit();
+
+    try global_map.ensureTotalCapacity(@intCast(globals.items.len));
     try symbols.ensureTotalCapacity(@intCast(globals.items.len));
 
     for (globals.items) |*g| {
@@ -64,13 +119,13 @@ pub fn applyToGlobals(
         try symbols.putNoClobber(g.name, {});
     }
 
+    // Apply invariant globals
     for (inv.globals) |g| {
-        // we do not crash if an invariant does not exists
         const target = global_map.get(g.name) orelse continue;
 
-        // Build field map for this global
-        var field_map: std.StringHashMap(*Parser.Field) = .init(allocator);
+        var field_map = std.StringHashMap(*Parser.Field).init(allocator);
         defer field_map.deinit();
+
         try field_map.ensureTotalCapacity(@intCast(target.fields.len));
 
         for (target.fields) |*mf| {
@@ -80,38 +135,24 @@ pub fn applyToGlobals(
         for (g.fields) |f| {
             const mf = field_map.get(f.name) orelse continue;
 
-            switch (f.domain) {
-                .pointers => |ptrs| {
-                    for (ptrs) |p| {
-                        if (!symbols.contains(p)) return error.InvalidPointerTarget;
-                    }
-                },
-                else => {},
+            // --- Validate pointer targets first ---
+            if (f.domain == .pointers) {
+                for (f.domain.pointers) |p| {
+                    if (!symbols.contains(p))
+                        return error.InvalidPointerTarget;
+                }
             }
 
-            // Clone into globals ownership.
-            switch (f.domain) {
-                .top => {
-                    mf.domain = .top;
-                    mf.domain_owned = false;
-                },
-                .values => |vals| {
-                    const dup_vals = try allocator.alloc([]const u8, vals.len);
-                    for (vals, 0..) |v, vi| {
-                        dup_vals[vi] = try allocator.dupe(u8, v);
-                    }
-                    mf.domain = .{ .values = dup_vals };
-                    mf.domain_owned = true;
-                },
-                .pointers => |ptrs| {
-                    const dup_ptrs = try allocator.alloc([]const u8, ptrs.len);
-                    for (ptrs, 0..) |p, pi| {
-                        dup_ptrs[pi] = try allocator.dupe(u8, p);
-                    }
-                    mf.domain = .{ .pointers = dup_ptrs };
-                    mf.domain_owned = true;
-                },
+            // --- Clone domain transactionally ---
+            const cloned = try cloneDomain(allocator, f.domain);
+
+            // --- Free previous domain if owned ---
+            if (mf.domain_owned) {
+                mf.deinit(allocator);
             }
+
+            mf.domain = cloned.domain;
+            mf.domain_owned = cloned.owned;
         }
     }
 }
