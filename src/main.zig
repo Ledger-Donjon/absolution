@@ -1,12 +1,34 @@
+const builtin = @import("builtin");
 const std = @import("std");
 const clap = @import("clap");
 const fuzzmate = @import("fuzzmate");
-const invariant = @import("fuzzmate").invariant;
+const invariant = fuzzmate.invariant;
+
+fn writeSeed(
+    allocator: std.mem.Allocator,
+    path: []const u8,
+    size: usize,
+) !void {
+    var file = try std.fs.cwd().createFile(path, .{ .truncate = true });
+    defer file.close();
+
+    const chunk_size = 4096;
+    const zeros = try allocator.alloc(u8, chunk_size);
+    defer allocator.free(zeros);
+    @memset(zeros, 0);
+
+    var remaining = size;
+    while (remaining > 0) {
+        const n = @min(remaining, chunk_size);
+        try file.writeAll(zeros[0..n]);
+        remaining -= n;
+    }
+}
 
 const Options = struct {
     targets: []const []const u8,
     redef: []const u8,
-    invariant: ?[]const u8,
+    invariant_path: ?[]const u8,
     out_c: []const u8,
     zon: ?[]const u8,
     seed: ?[]const u8,
@@ -27,37 +49,15 @@ const cli = clap.parseParamsComptime(
     \\
 );
 
-const helpOpts: clap.HelpOptions = .{
+const help_opts: clap.HelpOptions = .{
     .description_indent = 2,
 };
 
-/// Create or truncate a seed file and fill it with zero bytes.
-/// Args:
-///   allocator: Allocator used to stage the zero buffer.
-///   path: Destination file path.
-///   size: Number of bytes to write.
-fn writeSeed(allocator: std.mem.Allocator, path: []const u8, size: usize) !void {
-    var file = try std.fs.cwd().createFile(path, .{ .truncate = true });
-    defer file.close();
-
-    const buf_size = 4096;
-    const zeros = try allocator.alloc(u8, buf_size);
-    defer allocator.free(zeros);
-    @memset(zeros, 0);
-
-    var remaining = size;
-    while (remaining > 0) {
-        const to_write = @min(remaining, buf_size);
-        try file.writeAll(zeros[0..to_write]);
-        remaining -= to_write;
-    }
+fn printHelpAndFail(stream: std.fs.File) !Options {
+    try clap.helpToFile(stream, clap.Help, &cli, help_opts);
+    return error.InvalidArgs;
 }
 
-/// Parse command-line arguments and return resolved options.
-/// Args:
-///   allocator: Allocator used for clap parsing and derived defaults.
-/// Returns:
-///   Options struct with CLI-resolved paths and flags.
 fn parseArgs(allocator: std.mem.Allocator) !Options {
     var diag = clap.Diagnostic{};
     var res = clap.parse(clap.Help, &cli, clap.parsers.default, .{
@@ -69,78 +69,60 @@ fn parseArgs(allocator: std.mem.Allocator) !Options {
     };
     defer res.deinit();
 
-    if (res.args.help != 0) {
-        try clap.helpToFile(.stdout(), clap.Help, &cli, helpOpts);
-        return error.InvalidArgs;
-    }
+    if (res.args.help != 0) return printHelpAndFail(.stdout());
 
-    var targets_list = std.ArrayList([]const u8).empty;
-    errdefer targets_list.deinit(allocator);
-    for (res.args.targets) |t| {
-        try targets_list.append(allocator, t);
-    }
+    const targets = try allocator.dupe([]const u8, res.args.targets);
+    errdefer allocator.free(targets);
 
-    if (targets_list.items.len == 0) {
-        try clap.helpToFile(.stderr(), clap.Help, &cli, helpOpts);
-        return error.InvalidArgs;
-    }
+    if (targets.len == 0) return printHelpAndFail(.stderr());
 
-    const redef_path = res.args.redef orelse {
-        try clap.helpToFile(.stderr(), clap.Help, &cli, helpOpts);
-        return error.InvalidArgs;
-    };
-    const out_c_path = res.args.out orelse "fuzzer.c";
-    const zon_path = res.args.zon;
-    const seed_path = res.args.seed orelse "fuzzer.seed";
-    const entry_name = res.args.entry orelse "AbsolutionTestOneInput";
+    const redef_path = res.args.redef orelse return printHelpAndFail(.stderr());
 
-    // Collect positional arguments (C compiler flags after '--')
-    var cflags_list = std.ArrayList([]const u8).empty;
-    errdefer cflags_list.deinit(allocator);
-    for (res.positionals[0]) |cflag| {
-        try cflags_list.append(allocator, cflag);
-    }
+    const cflags = try allocator.dupe([]const u8, res.positionals[0]);
+    // const cflags = try collectSlice(allocator, res.positionals[0]);
+    errdefer allocator.free(cflags);
 
     return .{
-        .targets = try targets_list.toOwnedSlice(allocator),
+        .targets = targets,
         .redef = redef_path,
-        .invariant = res.args.invariant,
-        .out_c = out_c_path,
-        .zon = zon_path,
-        .seed = seed_path,
-        .entry = entry_name,
-        .cflags = try cflags_list.toOwnedSlice(allocator),
+        .invariant_path = res.args.invariant,
+        .out_c = res.args.out orelse "fuzzer.c",
+        .zon = res.args.zon,
+        .seed = res.args.seed orelse "fuzzer.seed",
+        .entry = res.args.entry orelse "AbsolutionTestOneInput",
+        .cflags = cflags,
     };
 }
 
-/// Entry point: parse CLI, collect globals, emit fuzzer sources, and seed file.
 pub fn main() !void {
-    // Set up execution allocators
-    // Once 0.16.0 releases, let's migrate to the new big main method with
-    // allocator and IO initialization
+    // Allocators
     var gpa = std.heap.GeneralPurposeAllocator(.{ .stack_trace_frames = 8 }){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
     var arena: std.heap.ArenaAllocator = .init(allocator);
     defer arena.deinit();
 
-    // Get user options
+    // CLI
     const opts = parseArgs(allocator) catch return;
     defer allocator.free(opts.targets);
     defer allocator.free(opts.cflags);
 
+    // Parser setup
     var parser = try fuzzmate.Parser.init(allocator, arena.allocator(), opts.cflags);
-    defer parser.deinit();
+    defer if (builtin.mode != .ReleaseFast) parser.deinit();
 
+    // Retrieve Globals from targets
     var globals = try parser.collectGlobals(opts.targets);
-    defer fuzzmate.Parser.free_globals(allocator, &globals);
+    defer if (builtin.mode != .ReleaseFast) fuzzmate.Parser.free_globals(allocator, &globals);
 
+    // Optional invariant
     var inv: ?invariant.Invariant = null;
-    if (opts.invariant) |inv_path| {
+    if (opts.invariant_path) |inv_path| {
         inv = try invariant.loadZon(allocator, inv_path);
-        defer if (inv) |spec| spec.deinit(allocator);
+        defer if (builtin.mode != .ReleaseFast) inv.?.deinit(allocator);
     }
 
+    // Code generation
     const needed_bytes = try fuzzmate.cgen.generateFuzzer(
         allocator,
         &globals,
@@ -151,7 +133,8 @@ pub fn main() !void {
         opts.entry,
     );
 
-    if (opts.seed) |seed_output| {
-        try writeSeed(allocator, seed_output, needed_bytes);
+    // Optional seed
+    if (opts.seed) |seed_path| {
+        try writeSeed(allocator, seed_path, needed_bytes);
     }
 }
