@@ -74,8 +74,6 @@ pub fn init(gpa: std.mem.Allocator, arena: std.mem.Allocator, cflags: []const []
     // Configure include search order from the bundled sysroot.
     try include_paths.addZigCcImplicitIncludes(driver.comp, resource_dir_dupe);
 
-    const empty_main = try toolchain.driver.comp.addSourceFromBuffer("<fuzzmate>", "\n");
-    const builtin_source = try driver.comp.generateBuiltinMacros(driver.system_defines);
     // Add compatibility macros for LLVM/Clang 18+ headers.
     // __building_module(x) is a Clang builtin that returns 0 unless building a specific
     // Clang module. Aro doesn't support Clang modules, so we define it to always return 0.
@@ -85,7 +83,11 @@ pub fn init(gpa: std.mem.Allocator, arena: std.mem.Allocator, cflags: []const []
         \\#define __building_module(x) 0
         \\
     );
+    // We call buildUserMacros before generateBuiltinMacros as calling parseArgs will
+    // update the driver state
     const user_macros = try buildUserMacros(toolchain, cflags, gpa);
+    const builtin_source = try driver.comp.generateBuiltinMacros(driver.system_defines);
+    const empty_main = try toolchain.driver.comp.addSourceFromBuffer("<fuzzmate>", "\n");
 
     return .{
         .gpa = gpa,
