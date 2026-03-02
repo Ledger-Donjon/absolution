@@ -99,7 +99,7 @@ pub fn init(gpa: std.mem.Allocator, arena: std.mem.Allocator, cflags: []const []
 
 /// Process C compiler flags via arocc's Driver.
 /// Handles -I, -D, -f*, -std=, and other standard C compiler flags.
-pub fn buildUserMacros(toolchain: aro.Toolchain, cflags: []const []const u8, allocator: std.mem.Allocator) !aro.Source {
+fn buildUserMacros(toolchain: aro.Toolchain, cflags: []const []const u8, allocator: std.mem.Allocator) !aro.Source {
     if (cflags.len == 0) return toolchain.driver.comp.addSourceFromBuffer("<no cflags>", "\n");
     // Driver.parseArgs expects argv format where index 0 is the program name.
     // Prepend a dummy program name so the flags start at index 1.
@@ -144,7 +144,7 @@ pub fn deinit(p: *Parser) void {
     p.* = undefined;
 }
 
-pub fn free_globals(allocator: std.mem.Allocator, globals: *std.ArrayList(Global)) void {
+pub fn freeGlobals(allocator: std.mem.Allocator, globals: *std.ArrayList(Global)) void {
     for (globals.items) |*g| g.deinit(allocator);
     globals.deinit(allocator);
 }
@@ -196,9 +196,9 @@ pub fn collectGlobals(p: *Parser, paths: []const []const u8) !std.ArrayList(Glob
 /// are skipped to avoid duplicate extern declarations in the generated fuzzer.
 fn collectGlobalsFromTree(comp: *aro.Compilation, tree: aro.Tree, gpa: std.mem.Allocator) !std.ArrayList(Global) {
     var globals: std.ArrayList(Global) = .empty;
-    errdefer free_globals(gpa, &globals);
+    errdefer freeGlobals(gpa, &globals);
     // prevent number of reallocations on big compilation units
-    // try globals.ensureTotalCapacity(gpa, tree.root_decls.items.len);
+    try globals.ensureTotalCapacity(gpa, tree.root_decls.items.len);
 
     // Track non-static globals already collected so that the same linker
     // symbol appearing in multiple translation units is emitted only once.

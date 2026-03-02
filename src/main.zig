@@ -5,7 +5,6 @@ const fuzzmate = @import("fuzzmate");
 const invariant = fuzzmate.invariant;
 
 fn writeSeed(
-    allocator: std.mem.Allocator,
     path: []const u8,
     size: usize,
 ) !void {
@@ -13,14 +12,12 @@ fn writeSeed(
     defer file.close();
 
     const chunk_size = 4096;
-    const zeros = try allocator.alloc(u8, chunk_size);
-    defer allocator.free(zeros);
-    @memset(zeros, 0);
+    const chunk: [chunk_size]u8 = undefined;
 
     var remaining = size;
     while (remaining > 0) {
         const n = @min(remaining, chunk_size);
-        try file.writeAll(zeros[0..n]);
+        try file.writeAll(chunk[0..n]);
         remaining -= n;
     }
 }
@@ -113,7 +110,7 @@ pub fn main() !void {
 
     // Retrieve Globals from targets
     var globals = try parser.collectGlobals(opts.targets);
-    defer if (builtin.mode != .ReleaseFast) fuzzmate.Parser.free_globals(allocator, &globals);
+    defer if (builtin.mode != .ReleaseFast) fuzzmate.Parser.freeGlobals(allocator, &globals);
 
     // Optional invariant
     var inv: ?invariant.Invariant = null;
@@ -135,6 +132,6 @@ pub fn main() !void {
 
     // Optional seed
     if (opts.seed) |seed_path| {
-        try writeSeed(allocator, seed_path, needed_bytes);
+        try writeSeed(seed_path, needed_bytes);
     }
 }
