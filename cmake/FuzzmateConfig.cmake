@@ -8,9 +8,6 @@
 #
 # And the function fuzzmate_add_fuzzer() is available (see FuzzmateFuzzer.cmake).
 
-# Locate the fuzzmate binary.  When installed via `zig build`, the layout is:
-#   <prefix>/bin/fuzzmate
-#   <prefix>/lib/cmake/Fuzzmate/FuzzmateConfig.cmake   (this file)
 find_program(FUZZMATE_EXECUTABLE fuzzmate
     HINTS "${CMAKE_CURRENT_LIST_DIR}/../../../bin"
 )
@@ -20,7 +17,7 @@ if(NOT FUZZMATE_EXECUTABLE)
         "FUZZMATE_EXECUTABLE explicitly.")
 endif()
 
-# Locate objcopy (GNU or LLVM).
+# Prefer llvm-objcopy when available — better LLVM bitcode compatibility.
 find_program(FUZZMATE_OBJCOPY
     NAMES llvm-objcopy objcopy
 )
@@ -29,11 +26,8 @@ if(NOT FUZZMATE_OBJCOPY)
         "Install binutils or llvm and make sure objcopy is on your PATH.")
 endif()
 
-# Remember where our helper scripts live so FuzzmateFuzzer.cmake can find
-# ApplyRedef.cmake at build time.
 set(_FUZZMATE_MODULE_DIR "${CMAKE_CURRENT_LIST_DIR}")
 
-# Pull in the function definitions.
 include("${CMAKE_CURRENT_LIST_DIR}/FuzzmateFuzzer.cmake")
 
 set(Fuzzmate_FOUND TRUE)

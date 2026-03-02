@@ -11,7 +11,6 @@ fuzzmate/
 │   ├── root.zig              # Library exports (Parser, cgen, invariant)
 │   ├── Parser.zig            # C parsing via aro, global/field extraction
 │   ├── invariant.zig         # .zon invariant loading and application
-│   ├── integration_test.zig  # Integration test runner
 │   └── cgen/
 │       ├── tree.zig          # Core data structures (Domain, Field, Global)
 │       ├── builder.zig       # File writing utilities
