@@ -49,7 +49,6 @@ pub fn init(gpa: std.mem.Allocator, arena: std.mem.Allocator, cflags: []const []
     errdefer quickDestroy(gpa, comp);
     // Use clang frontend defaults (same as zig cc).
     comp.langopts.setEmulatedCompiler(.clang);
-    comp.langopts.standard = .c23;
 
     // Compute resource_dir relative to executable and store a duped copy
     const exe_path = try std.fs.selfExePathAlloc(gpa);
