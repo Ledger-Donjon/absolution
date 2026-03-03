@@ -19,7 +19,7 @@ target_link_libraries(parser PRIVATE protocol)
 #   cmake -B build -G Ninja \
 #       -DENABLE_FUZZING=ON \
 #       -DCMAKE_C_COMPILER=clang \
-#       -DFuzzmate_DIR=<prefix>/lib/cmake/Fuzzmate
+#       -DAbsolution_DIR=<prefix>/lib/cmake/Absolution
 #
 #   cmake --build build --target fuzz_decode
 #
@@ -29,16 +29,16 @@ target_link_libraries(parser PRIVATE protocol)
 option(ENABLE_FUZZING "Build fuzz targets" OFF)
 
 if(ENABLE_FUZZING)
-    find_package(Fuzzmate REQUIRED)
+    find_package(Absolution REQUIRED)
 
-    # The TARGETS are the .c files whose globals we want fuzzmate to sample.
+    # The TARGETS are the .c files whose globals we want absolution to sample.
     # The HARNESS is our test function that exercises the code under those globals.
     # ENTRY names the function in the harness (must match the C definition).
     #
     # LINK_LIBRARIES automatically propagates include dirs and compile
     # definitions from the protocol target (declared PUBLIC above), so we
     # don't need to duplicate INCLUDE_DIRECTORIES or COMPILE_DEFINITIONS.
-    fuzzmate_add_fuzzer(
+    absolution_add_fuzzer(
         NAME fuzz_decode
         TARGETS
             src/decoder.c

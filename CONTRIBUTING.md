@@ -1,11 +1,11 @@
 # Contributing
 
-This guide explains the code organization and development workflow for fuzzmate.
+This guide explains the code organization and development workflow for absolution.
 
 ## Code Organization
 
 ```
-fuzzmate/
+absolution/
 ├── src/
 │   ├── main.zig              # CLI entrypoint and argument parsing
 │   ├── root.zig              # Library exports (Parser, cgen, invariant)
@@ -98,7 +98,7 @@ bash scripts/integration.sh  # Integration tests
 3. Generate the golden `.zon` output:
    ```bash
    zig build
-   zig-out/bin/fuzzmate -t tests/my_test/myfile.c --zon tests/my_test/myfile.c.zon --redef /dev/null
+   zig-out/bin/absolution -t tests/my_test/myfile.c --zon tests/my_test/myfile.c.zon --redef /dev/null
    # Verify the output is correct
    ```
 
@@ -157,7 +157,7 @@ pre-commit install
 
 ## Self-Contained Philosophy
 
-Fuzzmate is completely self-contained at runtime. It uses:
+Absolution is completely self-contained at runtime. It uses:
 - The bundled aro library for C parsing and preprocessing
 - Bundled sysroot headers copied at build time to `zig-out/lib/`
 

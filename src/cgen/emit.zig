@@ -162,7 +162,7 @@ pub fn writeFuzzerC(
 
     // Expose the total global-state byte count so custom mutators know
     // where the APDU payload begins in the flat fuzzer input.
-    const globals_size_define = try std.fmt.allocPrint(allocator, "#define FUZZMATE_GLOBALS_SIZE {d}\n\n", .{needed_bytes});
+    const globals_size_define = try std.fmt.allocPrint(allocator, "#define ABSOLUTION_GLOBALS_SIZE {d}\n\n", .{needed_bytes});
     defer allocator.free(globals_size_define);
     try file.writeAll(globals_size_define);
 
@@ -215,7 +215,7 @@ fn emitSampler(allocator: std.mem.Allocator, globals: []const Parser.Global, fil
     var ptr_idx: usize = 0;
     try file.writeAll("ptrdiff_t sample_invariant(const uint8_t *data, size_t size) {\n");
     try file.writeAll("    size_t off = 0;\n");
-    try file.writeAll("    const size_t needed = FUZZMATE_GLOBALS_SIZE ;\n");
+    try file.writeAll("    const size_t needed = ABSOLUTION_GLOBALS_SIZE ;\n");
     try file.writeAll("    if (size < needed) return -1;\n");
 
     for (globals) |g| {

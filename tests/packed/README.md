@@ -23,10 +23,10 @@ In `Parser.init`, `buildUserMacros` must be called before `generateBuiltinMacros
 
 ## How to verify
 
-**With the fix** — Run fuzzmate on the packed test; it should succeed and produce the expected zon output (e.g. `obj_pool` with size 33792, stride 66 for `nbgl_any_obj_t`):
+**With the fix** — Run absolution on the packed test; it should succeed and produce the expected zon output (e.g. `obj_pool` with size 33792, stride 66 for `nbgl_any_obj_t`):
 ```bash
 zig build
-./zig-out/bin/fuzzmate init tests/packed/packed.c -- tests/packed/packed.c.flags \
+./zig-out/bin/absolution init tests/packed/packed.c -- tests/packed/packed.c.flags \
   -o /dev/null -r /dev/null -z packed.zon
 ```
 

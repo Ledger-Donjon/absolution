@@ -1,6 +1,6 @@
 # Short Enums Test
 
-This test verifies that fuzzmate correctly handles the `-fshort-enums` compiler flag via arocc.
+This test verifies that absolution correctly handles the `-fshort-enums` compiler flag via arocc.
 
 ## Background
 
@@ -25,13 +25,13 @@ typedef struct {
 
 ## Solution
 
-Fuzzmate now supports passing C compiler flags to arocc via the `--` separator:
+Absolution now supports passing C compiler flags to arocc via the `--` separator:
 
 ```bash
-fuzzmate --targets file.c --out fuzzer.c --redef redef.txt -- -fshort-enums -I /path -DFOO=1
+absolution --targets file.c --out fuzzer.c --redef redef.txt -- -fshort-enums -I /path -DFOO=1
 ```
 
-The CMake integration automatically passes `INCLUDE_DIRECTORIES`, `COMPILE_DEFINITIONS`, and `COMPILE_OPTIONS` from the target to fuzzmate.
+The CMake integration automatically passes `INCLUDE_DIRECTORIES`, `COMPILE_DEFINITIONS`, and `COMPILE_OPTIONS` from the target to absolution.
 
 ## Test Files
 
@@ -46,7 +46,7 @@ The CMake integration automatically passes `INCLUDE_DIRECTORIES`, `COMPILE_DEFIN
 ./scripts/integration.sh
 
 # Run manually
-./zig-out/bin/fuzzmate --targets tests/short_enums/short_enums.c \
+./zig-out/bin/absolution --targets tests/short_enums/short_enums.c \
     --zon /tmp/out.zon --out /tmp/fuzzer.c --redef /tmp/redef.txt -- -fshort-enums
 
 # Verify size

@@ -1,7 +1,7 @@
 #include "protocol.h"
 
 /* ── Global session state ─────────────────────────────────────────
- * fuzzmate will sample this struct so the fuzzer explores many
+ * absolution will sample this struct so the fuzzer explores many
  * different session histories without needing a long packet stream. */
 static struct session sess = {
     .next_seq  = 0,

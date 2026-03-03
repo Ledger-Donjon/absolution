@@ -1,33 +1,33 @@
-# FuzzmateConfig.cmake — find_package(Fuzzmate) support.
+# AbsolutionConfig.cmake — find_package(Absolution) support.
 #
-# After a successful find_package(Fuzzmate), the following variables are set:
+# After a successful find_package(Absolution), the following variables are set:
 #
-#   FUZZMATE_EXECUTABLE  — path to the fuzzmate binary
-#   FUZZMATE_OBJCOPY     — path to objcopy / llvm-objcopy
-#   Fuzzmate_FOUND       — TRUE
+#   ABSOLUTION_EXECUTABLE  — path to the absolution binary
+#   ABSOLUTION_OBJCOPY     — path to objcopy / llvm-objcopy
+#   Absolution_FOUND       — TRUE
 #
-# And the function fuzzmate_add_fuzzer() is available (see FuzzmateFuzzer.cmake).
+# And the function absolution_add_fuzzer() is available (see AbsolutionFuzzer.cmake).
 
-find_program(FUZZMATE_EXECUTABLE fuzzmate
+find_program(ABSOLUTION_EXECUTABLE absolution
     HINTS "${CMAKE_CURRENT_LIST_DIR}/../../../bin"
 )
-if(NOT FUZZMATE_EXECUTABLE)
-    message(FATAL_ERROR "Could not find the fuzzmate binary.  "
-        "Make sure fuzzmate is installed and on your PATH, or set "
-        "FUZZMATE_EXECUTABLE explicitly.")
+if(NOT ABSOLUTION_EXECUTABLE)
+    message(FATAL_ERROR "Could not find the absolution binary.  "
+        "Make sure absolution is installed and on your PATH, or set "
+        "ABSOLUTION_EXECUTABLE explicitly.")
 endif()
 
 # Prefer llvm-objcopy when available — better LLVM bitcode compatibility.
-find_program(FUZZMATE_OBJCOPY
+find_program(ABSOLUTION_OBJCOPY
     NAMES llvm-objcopy objcopy
 )
-if(NOT FUZZMATE_OBJCOPY)
+if(NOT ABSOLUTION_OBJCOPY)
     message(FATAL_ERROR "Could not find objcopy or llvm-objcopy.  "
         "Install binutils or llvm and make sure objcopy is on your PATH.")
 endif()
 
-set(_FUZZMATE_MODULE_DIR "${CMAKE_CURRENT_LIST_DIR}")
+set(_ABSOLUTION_MODULE_DIR "${CMAKE_CURRENT_LIST_DIR}")
 
-include("${CMAKE_CURRENT_LIST_DIR}/FuzzmateFuzzer.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/AbsolutionFuzzer.cmake")
 
-set(Fuzzmate_FOUND TRUE)
+set(Absolution_FOUND TRUE)

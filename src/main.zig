@@ -1,8 +1,8 @@
 const builtin = @import("builtin");
 const std = @import("std");
 const clap = @import("clap");
-const fuzzmate = @import("fuzzmate");
-const invariant = fuzzmate.invariant;
+const absolution = @import("absolution");
+const invariant = absolution.invariant;
 
 fn writeSeed(
     path: []const u8,
@@ -105,12 +105,12 @@ pub fn main() !void {
     defer allocator.free(opts.cflags);
 
     // Parser setup
-    var parser = try fuzzmate.Parser.init(allocator, arena.allocator(), opts.cflags);
+    var parser = try absolution.Parser.init(allocator, arena.allocator(), opts.cflags);
     defer if (builtin.mode != .ReleaseFast) parser.deinit();
 
     // Retrieve Globals from targets
     var globals = try parser.collectGlobals(opts.targets);
-    defer if (builtin.mode != .ReleaseFast) fuzzmate.Parser.freeGlobals(allocator, &globals);
+    defer if (builtin.mode != .ReleaseFast) absolution.Parser.freeGlobals(allocator, &globals);
 
     // Optional invariant
     var inv: ?invariant.Invariant = null;
@@ -120,7 +120,7 @@ pub fn main() !void {
     }
 
     // Code generation
-    const needed_bytes = try fuzzmate.cgen.generateFuzzer(
+    const needed_bytes = try absolution.cgen.generateFuzzer(
         allocator,
         &globals,
         opts.redef,

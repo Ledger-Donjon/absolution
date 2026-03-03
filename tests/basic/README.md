@@ -12,7 +12,7 @@ N/A - This is a baseline feature test, not a regression test.
 ## Test Validation
 - `basic.c` defines a typedef'd struct array: `mytype astruct[10]`
 - The struct has fields `int a`, `short b`, `char c` with implicit padding
-- Fuzzmate should:
+- Absolution should:
   - Detect `astruct` as a non-static global variable
   - Correctly calculate size (80 bytes = 10 elements × 8 bytes each)
   - Identify struct fields with correct offsets and bit widths

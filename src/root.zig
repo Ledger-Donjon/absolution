@@ -1,4 +1,4 @@
-//! Fuzzmate library for invariant-constrained fuzzing of C programs.
+//! Absolution library for invariant-constrained fuzzing of C programs.
 //!
 //! Main components:
 //! - `Parser`: Parses C translation units and extracts global variables

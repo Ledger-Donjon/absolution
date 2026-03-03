@@ -1,10 +1,10 @@
 # Usage Guide
 
-This guide covers the full workflow for using fuzzmate to fuzz C programs with invariant-constrained global state.
+This guide covers the full workflow for using absolution to fuzz C programs with invariant-constrained global state.
 
 ## Overview
 
-Fuzzmate generates a libFuzzer harness that:
+Absolution generates a libFuzzer harness that:
 
 1. **Samples** global state from fuzzer input (respecting domain constraints)
 2. **Calls** your test harness function (configurable with `--entry`)
@@ -13,7 +13,7 @@ Fuzzmate generates a libFuzzer harness that:
 ## CLI Reference
 
 ```
-fuzzmate [OPTIONS] [-- <cflags>...]
+absolution [OPTIONS] [-- <cflags>...]
 
 OPTIONS:
   -t, --targets <str>...   (required) C translation unit(s) with globals to sample.
@@ -50,7 +50,7 @@ void process_config(void);
 // targets.c
 
 
-// Because it is not `const` it will be collected by fuzzmate
+// Because it is not `const` it will be collected by absolution
 Config config;
 
 void process_config(void) {
@@ -62,7 +62,7 @@ void process_config(void) {
 
 ### Step 2: Create your harness
 
-The harness defines a function that exercises your code. By default fuzzmate
+The harness defines a function that exercises your code. By default absolution
 expects `AbsolutionTestOneInput`, but you can choose any name with `--entry`:
 
 ```c
@@ -70,7 +70,7 @@ expects `AbsolutionTestOneInput`, but you can choose any name with `--entry`:
 #include "targets.h"
 
 int MyTestOneInput(const uint8_t *data, size_t size) {
-    // For this test we only rely on fuzzmate behavior
+    // For this test we only rely on absolution behavior
     // but you can use data and size to fuzz parameters
     process_config();
     return 0;
@@ -80,7 +80,7 @@ int MyTestOneInput(const uint8_t *data, size_t size) {
 ### Step 3: Generate the fuzzer
 
 ```bash
-fuzzmate \
+absolution \
   -t targets.c \
   --out fuzzer.c \
   --redef fuzzer.redef \
@@ -92,7 +92,7 @@ fuzzmate \
 If your targets need include paths or preprocessor defines, pass them after `--`:
 
 ```bash
-fuzzmate \
+absolution \
   -t targets.c \
   --out fuzzer.c \
   --redef fuzzer.redef \
@@ -104,7 +104,7 @@ fuzzmate \
 
 ### Step 4: Apply symbol redefinitions and build
 
-When targets contain `static` globals, fuzzmate generates a `.redef` file
+When targets contain `static` globals, absolution generates a `.redef` file
 with symbol renames. Apply them with `objcopy` before linking:
 
 ```bash
@@ -123,7 +123,7 @@ mkdir -p corpus && cp fuzzer.seed corpus/
 ./fuzzer corpus/
 ```
 
-For CMake projects, `fuzzmate_add_fuzzer()` handles all of this automatically.
+For CMake projects, `absolution_add_fuzzer()` handles all of this automatically.
 See the [example/protocol_parser/](example/protocol_parser/) directory.
 
 ## Invariant Language
@@ -273,17 +273,17 @@ LibFuzzer entrypoint that:
 
 ```bash
 # Generate with auto-detected domains
-fuzzmate -t targets.c --zon targets.zon --out fuzzer.c --redef fuzzer.redef
+absolution -t targets.c --zon targets.zon --out fuzzer.c --redef fuzzer.redef
 
 # Edit targets.zon to constrain domains...
 
 # Regenerate with constraints applied
-fuzzmate -t targets.c --invariant targets.zon --out fuzzer.c --redef fuzzer.redef
+absolution -t targets.c --invariant targets.zon --out fuzzer.c --redef fuzzer.redef
 ```
 
 ### Pointer domain validation
 
-When using `.pointers` domains, fuzzmate validates that all referenced symbols exist in the parsed globals. Invalid symbols cause an error.
+When using `.pointers` domains, absolution validates that all referenced symbols exist in the parsed globals. Invalid symbols cause an error.
 
 ### Skipping invariant checks
 
@@ -293,19 +293,19 @@ Return `-1` from your harness function to skip the post-call invariant check. Us
 
 ## CMake Integration
 
-Fuzzmate includes CMake modules installed to `lib/cmake/Fuzzmate/`.
+Absolution includes CMake modules installed to `lib/cmake/Absolution/`.
 Point CMake at the install prefix:
 
 ```bash
 cmake -B build -G Ninja \
     -DENABLE_FUZZING=ON \
     -DCMAKE_C_COMPILER=clang \
-    -DFuzzmate_DIR=/path/to/fuzzmate/release/lib/cmake/Fuzzmate
+    -DAbsolution_DIR=/path/to/absolution/release/lib/cmake/Absolution
 
 cmake --build build --target my_fuzzer
 ```
 
-The `fuzzmate_add_fuzzer()` function accepts these keywords:
+The `absolution_add_fuzzer()` function accepts these keywords:
 
 | Keyword | Required | Description |
 |---------|----------|-------------|
@@ -324,9 +324,9 @@ The `fuzzmate_add_fuzzer()` function accepts these keywords:
 
 `LINK_LIBRARIES` entries that are CMake targets automatically propagate their
 `PUBLIC` / `INTERFACE` include directories, compile definitions, and compile
-options to **all stages** of the fuzzmate pipeline:
+options to **all stages** of the absolution pipeline:
 
-- The **fuzzmate CLI** (so aro sees the correct headers and defines)
+- The **absolution CLI** (so aro sees the correct headers and defines)
 - The **target `.o` compilation** (so objects match the parsed layout)
 - The **harness and `fuzzer.c` compilation** (so the final link is consistent)
 
@@ -335,8 +335,8 @@ that are already declared on your library targets:
 
 ```cmake
 # my_sdk already declares PUBLIC include dirs and defines —
-# fuzzmate picks them up automatically via LINK_LIBRARIES.
-fuzzmate_add_fuzzer(
+# absolution picks them up automatically via LINK_LIBRARIES.
+absolution_add_fuzzer(
     NAME fuzz_my_target
     TARGETS src/module.c
     HARNESS fuzz/harness.c

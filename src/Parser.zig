@@ -59,7 +59,7 @@ pub fn init(gpa: std.mem.Allocator, arena: std.mem.Allocator, cflags: []const []
 
     // Initialize driver and toolchain using stable self pointers
     var driver = try gpa.create(aro.Driver);
-    driver.* = .{ .comp = comp, .aro_name = "fuzzmate", .diagnostics = diag, .resource_dir = resource_dir_dupe };
+    driver.* = .{ .comp = comp, .aro_name = "absolution", .diagnostics = diag, .resource_dir = resource_dir_dupe };
     errdefer quickDestroy(gpa, driver);
     var toolchain: aro.Toolchain = .{ .driver = driver, .filesystem = .{ .fake = &.{} } };
     errdefer toolchain.deinit();
@@ -87,7 +87,7 @@ pub fn init(gpa: std.mem.Allocator, arena: std.mem.Allocator, cflags: []const []
     // update the driver state
     const user_macros = try buildUserMacros(toolchain, cflags, gpa);
     const builtin_source = try driver.comp.generateBuiltinMacros(driver.system_defines);
-    const empty_main = try toolchain.driver.comp.addSourceFromBuffer("<fuzzmate>", "\n");
+    const empty_main = try toolchain.driver.comp.addSourceFromBuffer("<absolution>", "\n");
 
     return .{
         .gpa = gpa,
@@ -106,7 +106,7 @@ fn buildUserMacros(toolchain: aro.Toolchain, cflags: []const []const u8, allocat
     // Prepend a dummy program name so the flags start at index 1.
     var args = std.ArrayList([]const u8).empty;
     defer args.deinit(allocator);
-    try args.append(allocator, "fuzzmate");
+    try args.append(allocator, "absolution");
     try args.appendSlice(allocator, cflags);
 
     var stdout_buf: [0]u8 = undefined;

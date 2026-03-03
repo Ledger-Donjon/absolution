@@ -15,10 +15,10 @@ static void reedSolomonComputeRemainder(const uint8_t data[], int dataLen,
 The bug requires the accumulated parser state from the preceding 7677 lines to trigger.
 See `tests/aroccbug/README.md` for detailed analysis.
 
-## Why zig cc works but fuzzmate doesn't
+## Why zig cc works but absolution doesn't
 
 - `zig cc` uses LLVM's Clang frontend - compiles this file fine
-- fuzzmate uses arocc (Zig-native C frontend) for AST access - crashes on this file
+- absolution uses arocc (Zig-native C frontend) for AST access - crashes on this file
 
 ## Golden file
 
@@ -28,7 +28,7 @@ The integration script recognizes this suffix and skips with a warning.
 ## When arocc fixes the bug
 
 1. Update arocc version in `build.zig.zon`
-2. Test if this file parses: `./zig-out/bin/fuzzmate --targets tests/bigone/bigone.c ...`
+2. Test if this file parses: `./zig-out/bin/absolution --targets tests/bigone/bigone.c ...`
 3. If it works, rename the golden file:
    ```bash
    mv bigone.c.zon.skip-arocc-bug bigone.c.zon

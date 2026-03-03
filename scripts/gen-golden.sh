@@ -8,7 +8,7 @@
 #   ./scripts/gen-golden.sh tests/aroccbug
 #
 # This script finds all .c files in the given test directory and generates
-# corresponding .zon golden files by running fuzzmate.
+# corresponding .zon golden files by running absolution.
 
 set -euo pipefail
 
@@ -25,10 +25,10 @@ if [ ! -d "$TEST_DIR" ]; then
     exit 1
 fi
 
-# Find the fuzzmate binary
-FUZZMATE="./zig-out/bin/fuzzmate"
-if [ ! -x "$FUZZMATE" ]; then
-    echo "Error: fuzzmate binary not found at $FUZZMATE"
+# Find the absolution binary
+ABSOLUTION="./zig-out/bin/absolution"
+if [ ! -x "$ABSOLUTION" ]; then
+    echo "Error: absolution binary not found at $ABSOLUTION"
     echo "Please run 'zig build' first"
     exit 1
 fi
@@ -62,16 +62,16 @@ for C_FILE in $C_FILES; do
         done < "$FLAGS_FILE"
     fi
     
-    # Run fuzzmate to generate the .zon file
+    # Run absolution to generate the .zon file
     if [ ${#EXTRA_ARGS[@]} -gt 0 ]; then
-        "$FUZZMATE" \
+        "$ABSOLUTION" \
             --targets "$C_FILE" \
             --zon "$TMPDIR/${BASENAME}.zon" \
             --out "$TMPDIR/${BASENAME}.fuzzer.c" \
             --redef "$TMPDIR/${BASENAME}.redef.txt" \
             -- "${EXTRA_ARGS[@]}"
     else
-        "$FUZZMATE" \
+        "$ABSOLUTION" \
             --targets "$C_FILE" \
             --zon "$TMPDIR/${BASENAME}.zon" \
             --out "$TMPDIR/${BASENAME}.fuzzer.c" \

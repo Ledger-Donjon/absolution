@@ -1,7 +1,7 @@
 .{
-    .name = .fuzzmate,
-    .version = "0.0.0",
-    .fingerprint = 0x22fff8fc7ec0503b, // Changing this has security and trust implications.
+    .name = .absolution,
+    .version = "1.0.0",
+    .fingerprint = 0x552b58a887ba4c67, // Changing this has security and trust implications.
     .minimum_zig_version = "0.15.2",
     .dependencies = .{
         .clap = .{

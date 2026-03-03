@@ -9,7 +9,7 @@ regression
 ## Issue
 When parsing C files containing functions with parameters, aro incorrectly emits
 `.variable` AST nodes for function parameters (e.g., `size_t size` from a function
-signature). Fuzzmate was picking these up as global variables to fuzz, causing
+signature). Absolution was picking these up as global variables to fuzz, causing
 invalid generated code.
 
 ## Symptom

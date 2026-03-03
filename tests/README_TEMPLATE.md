@@ -1,7 +1,7 @@
 # Test: [test_name]
 
 <!-- 
-  README Template for fuzzmate integration tests.
+  README Template for absolution integration tests.
   Copy this file to your test directory and fill in the sections.
   
   This format is designed to be:

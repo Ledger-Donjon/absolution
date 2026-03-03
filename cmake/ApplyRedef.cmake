@@ -1,12 +1,12 @@
 # ApplyRedef.cmake — script-mode helper invoked at build time.
 #
-# Reads a fuzzmate redefinition file and applies objcopy --redefine-syms /
+# Reads a absolution redefinition file and applies objcopy --redefine-syms /
 # --globalize-symbol to each listed object file.  All renames for a given
 # object file are batched into a single objcopy invocation instead of one
 # call per symbol, reducing process-fork overhead to O(unique_objects).
 #
 # Expected -D variables:
-#   REDEF_FILE    — path to the fuzzmate-generated .redef file
+#   REDEF_FILE    — path to the absolution-generated .redef file
 #   OBJ_LIST_FILE — path to a text file listing one object-file path per line
 #   OBJCOPY       — path to the objcopy (or llvm-objcopy) executable
 

@@ -9,7 +9,7 @@ const std = @import("std");
 /// Configure the compilation's include search paths using the bundled sysroot.
 /// The bundled sysroot lives under `resource_dir/lib/...`. We add directories
 /// in the same order that `zig cc -E -v` reports, except we intentionally omit
-/// /usr/local/include and /usr/include to keep fuzzmate self-contained:
+/// /usr/local/include and /usr/include to keep absolution self-contained:
 ///   1. <prefix>/lib/include (Zig's compiler-rt / intrinsic headers)
 ///   2. <prefix>/lib/libc/include/<target-triple> (target-specific libc headers)
 ///   3. <prefix>/lib/libc/include/generic-<abi-family> (generic libc headers)
@@ -57,7 +57,7 @@ pub fn addZigCcImplicitIncludes(comp: *aro.Compilation, resource_dir: []const u8
     }
 
     // Note: We intentionally do NOT add /usr/local/include or /usr/include.
-    // fuzzmate is self-contained and uses only the bundled headers from the
+    // absolution is self-contained and uses only the bundled headers from the
     // build-time copied sysroot. This ensures:
     //   1. Reproducible builds regardless of host system headers
     //   2. Proper system header tracking for filtering system symbols

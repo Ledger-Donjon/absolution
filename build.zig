@@ -13,7 +13,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    const mod = b.addModule("fuzzmate", .{
+    const mod = b.addModule("absolution", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
@@ -23,13 +23,13 @@ pub fn build(b: *std.Build) void {
     });
 
     const exe = b.addExecutable(.{
-        .name = "fuzzmate",
+        .name = "absolution",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
-                .{ .name = "fuzzmate", .module = mod },
+                .{ .name = "absolution", .module = mod },
                 .{ .name = "clap", .module = clap_dep.module("clap") },
             },
         }),
@@ -67,18 +67,18 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_exe_tests.step);
 }
 
-/// Install CMake package files so that `find_package(Fuzzmate)` works after
-/// `zig build` installs to a prefix.  Files land in `lib/cmake/Fuzzmate/`.
+/// Install CMake package files so that `find_package(Absolution)` works after
+/// `zig build` installs to a prefix.  Files land in `lib/cmake/Absolution/`.
 pub fn install_cmake_modules(b: *std.Build) void {
     b.installDirectory(.{
         .source_dir = b.path("cmake"),
         .install_dir = .prefix,
-        .install_subdir = "lib/cmake/Fuzzmate",
+        .install_subdir = "lib/cmake/Absolution",
     });
 }
 
 pub fn install_zig_cc_sysroot_headers(b: *std.Build) void {
-    // Bundle the same header sysroot that `zig cc` uses so fuzzmate's parsing
+    // Bundle the same header sysroot that `zig cc` uses so absolution's parsing
     // follows Zig's include resolution order and remains self-hosted.
     //
     // `zig cc -E -v` (Linux/glibc example) shows:

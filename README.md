@@ -1,6 +1,6 @@
-# Fuzzmate
+# Absolution
 
-Fuzzmate lets you specify an invariant for a program’s global state and fuzz its entrypoints from states uniformly sampled from that invariant. This helps surface bugs in any interleaving of calls, assuming the fuzzer can explore the space sufficiently.
+Absolution lets you specify an invariant for a program’s global state and fuzz its entrypoints from states uniformly sampled from that invariant. This helps surface bugs in any interleaving of calls, assuming the fuzzer can explore the space sufficiently.
 
 ## How it works
 
@@ -20,14 +20,14 @@ Fuzzmate lets you specify an invariant for a program’s global state and fuzz i
 ## Quick start
 
 ```bash
-# Build fuzzmate
+# Build absolution
 zig build
 
 # Show CLI help
-./zig-out/bin/fuzzmate -h
+./zig-out/bin/absolution -h
 
 # Generate fuzzer sources from one or more translation units
-./zig-out/bin/fuzzmate \
+./zig-out/bin/absolution \
   -t path/to/module_a.c \
   -t path/to/module_b.c \
   --entry MyTestOneInput \
@@ -47,13 +47,13 @@ mkdir -p corpus && cp fuzzer.seed corpus/
 
 ## CMake integration
 
-Fuzzmate ships CMake modules for `find_package(Fuzzmate)`. After installing,
+Absolution ships CMake modules for `find_package(Absolution)`. After installing,
 add fuzzing to an existing CMake project with a single function call:
 
 ```cmake
-find_package(Fuzzmate REQUIRED)
+find_package(Absolution REQUIRED)
 
-fuzzmate_add_fuzzer(
+absolution_add_fuzzer(
     NAME fuzz_my_target
     TARGETS src/module_a.c src/module_b.c
     HARNESS fuzz/my_harness.c
@@ -63,7 +63,7 @@ fuzzmate_add_fuzzer(
 )
 ```
 
-This creates a CMake target that handles the full pipeline: run fuzzmate,
+This creates a CMake target that handles the full pipeline: run absolution,
 compile objects, apply `objcopy` symbol redefinitions, and link the final fuzzer
 binary with sanitizers.
 

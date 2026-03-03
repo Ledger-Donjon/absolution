@@ -1,6 +1,6 @@
 // Test case to reproduce struct size mismatch caused by -fshort-enums.
 //
-// BUG: fuzzmate's arocc parser doesn't handle -fshort-enums flag, causing
+// BUG: absolution's arocc parser doesn't handle -fshort-enums flag, causing
 // struct size mismatches between parsed size and actual compiled size.
 //
 // Without -fshort-enums: enums are 4 bytes (int), io_app_t = 12 bytes

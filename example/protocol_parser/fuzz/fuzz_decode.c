@@ -5,7 +5,7 @@
 /*
  * Fuzz harness for the decode + validate + process pipeline.
  *
- * When linked with fuzzmate's generated fuzzer.c, the call order is:
+ * When linked with absolution's generated fuzzer.c, the call order is:
  *   1. LLVMFuzzerTestOneInput receives raw bytes from libFuzzer.
  *   2. sample_invariant() fills the global decoder_config and session
  *      structs from the first N bytes.

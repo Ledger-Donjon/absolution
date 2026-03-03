@@ -11,7 +11,7 @@ N/A - This is a feature test ensuring padding is properly identified.
 
 ## Test Validation
 - `padding.c` defines a struct with deliberate padding scenarios
-- Fuzzmate should correctly identify padding bytes inserted by the compiler
+- Absolution should correctly identify padding bytes inserted by the compiler
 - Padding fields should be marked with `is_padding = true`
 - Padding should have appropriate `pad_container` references
 

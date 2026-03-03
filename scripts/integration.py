@@ -3,10 +3,10 @@
 # dependencies = ["pytest"]
 # ///
 """
-Integration tests for fuzzmate.
+Integration tests for absolution.
 
-Finds the Zig binary, builds fuzzmate once, then for each test .c file:
-  1. Runs fuzzmate to produce .zon and fuzzer.c
+Finds the Zig binary, builds absolution once, then for each test .c file:
+  1. Runs absolution to produce .zon and fuzzer.c
   2. Compiles the generated fuzzer.c with ``zig cc``
   3. Compares the .zon output against a golden file
 
@@ -45,18 +45,18 @@ def _find_zig() -> Path:
 
 
 ZIG = _find_zig()
-FUZZMATE = PROJECT_ROOT / "zig-out/bin/fuzzmate"
+ABSOLUTION = PROJECT_ROOT / "zig-out/bin/absolution"
 
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
-@pytest.fixture(scope="session", autouse=True)
-def _build_fuzzmate():
-    """Build fuzzmate once before the whole test session."""
+@pytest.fixture(scope="session", autouse=False)
+def _build_absolution():
+    """Build absolution once before the whole test session."""
     subprocess.check_call([str(ZIG), "build", "install"], cwd=PROJECT_ROOT)
-    assert FUZZMATE.is_file(), f"fuzzmate binary not found at {FUZZMATE}"
+    assert ABSOLUTION.is_file(), f"absolution binary not found at {ABSOLUTION}"
 
 
 # ---------------------------------------------------------------------------
@@ -89,10 +89,10 @@ def _discover_tests():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("c_file,golden_zon", list(_discover_tests()))
-def test_fuzzmate(c_file: Path, golden_zon: Path, tmp_path: Path):
+def test_absolution(c_file: Path, golden_zon: Path, tmp_path: Path):
     include_dir = c_file.parent
 
-    # fuzzmate expects paths relative to PROJECT_ROOT (matches golden files)
+    # absolution expects paths relative to PROJECT_ROOT (matches golden files)
     rel = lambda p: str(p.relative_to(PROJECT_ROOT))
 
     # -- extra flags from .flags sidecar --
@@ -121,9 +121,9 @@ def test_fuzzmate(c_file: Path, golden_zon: Path, tmp_path: Path):
     out_redef = tmp_path / "redef.txt"
     out_obj = tmp_path / "fuzzer.o"
 
-    # 1. Run fuzzmate
+    # 1. Run absolution
     subprocess.check_call(
-        [str(FUZZMATE)] + target_args
+        [str(ABSOLUTION)] + target_args
         + ["--zon", str(out_zon), "--out", str(out_fuzzer), "--redef", str(out_redef)]
         + extra_flags,
         cwd=PROJECT_ROOT,

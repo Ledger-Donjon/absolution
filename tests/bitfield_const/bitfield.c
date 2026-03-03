@@ -1,6 +1,6 @@
 /* Test case for bit-field and const global handling.
  *
- * This file tests that fuzzmate:
+ * This file tests that absolution:
  * 1. Does NOT emit memcpy(&bitfield, ...) for bit-field members
  * 2. Does NOT sample const globals (including arrays of const elements)
  * 3. DOES sample non-const globals with regular (non-bitfield) members

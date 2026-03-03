@@ -10,7 +10,7 @@
 // data[] size is BUFFER_SIZE bytes.
 
 #ifndef BUFFER_SIZE
-#error We can not parse this file with fuzzmate
+#error We can not parse this file with absolution
 #endif
 
 typedef struct {

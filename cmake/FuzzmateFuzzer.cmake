@@ -1,10 +1,10 @@
-# FuzzmateFuzzer.cmake — provides the fuzzmate_add_fuzzer() function.
+# AbsolutionFuzzer.cmake — provides the absolution_add_fuzzer() function.
 #
 # Usage:
 #
-#   find_package(Fuzzmate REQUIRED)
+#   find_package(Absolution REQUIRED)
 #
-#   fuzzmate_add_fuzzer(
+#   absolution_add_fuzzer(
 #       NAME fuzz_my_target
 #       TARGETS src/module_a.c src/module_b.c
 #       HARNESS fuzz/fuzz_my_target.c
@@ -27,14 +27,14 @@
 #   LINK_LIBRARIES        — libraries to link into the fuzzer.  CMake targets in
 #                           this list are "absorbed": their source files (and those
 #                           of their transitive link dependencies) are compiled into
-#                           the OBJECT library and passed to fuzzmate for analysis.
+#                           the OBJECT library and passed to absolution for analysis.
 #                           Non-target names (e.g. -lm) and IMPORTED targets are
 #                           linked normally.
 #   SANITIZERS            — sanitizer list (default: fuzzer,address).
 #
 # Created targets:
 #   ${NAME}_objs      — OBJECT library containing compiled target sources.
-#   ${NAME}_generate  — Custom target that runs fuzzmate CLI to produce artifacts.
+#   ${NAME}_generate  — Custom target that runs absolution CLI to produce artifacts.
 #   ${NAME}_redef     — Custom target that applies objcopy symbol redefinitions.
 #   ${NAME}           — Final fuzzer executable.
 #
@@ -59,7 +59,7 @@
 #   _out_link_opts   — INTERFACE_LINK_OPTIONS
 #   _out_passthrough — non-target items + IMPORTED targets (link as-is)
 #   _visited         — bookkeeping set (pass an empty var on first call)
-function(_fuzzmate_collect_all
+function(_absolution_collect_all
         _targets
         _out_sources _out_absorbed
         _out_incs _out_defs _out_opts _out_link_opts
@@ -126,7 +126,7 @@ function(_fuzzmate_collect_all
                 endif()
                 get_target_property(_deps "${_item}" LINK_LIBRARIES)
                 if(_deps)
-                    _fuzzmate_collect_all("${_deps}"
+                    _absolution_collect_all("${_deps}"
                         _srcs _abs _incs _defs _opts _lopts _pass _vis)
                 endif()
             endif()
@@ -135,7 +135,7 @@ function(_fuzzmate_collect_all
 
         get_target_property(_ideps "${_item}" INTERFACE_LINK_LIBRARIES)
         if(_ideps)
-            _fuzzmate_collect_all("${_ideps}"
+            _absolution_collect_all("${_ideps}"
                 _srcs _abs _incs _defs _opts _lopts _pass _vis)
         endif()
     endforeach()
@@ -150,7 +150,7 @@ function(_fuzzmate_collect_all
     set(${_visited}         "${_vis}"   PARENT_SCOPE)
 endfunction()
 
-function(fuzzmate_add_fuzzer)
+function(absolution_add_fuzzer)
     cmake_parse_arguments(
         FUZZ
         ""
@@ -161,10 +161,10 @@ function(fuzzmate_add_fuzzer)
 
     # ── Validate ─────────────────────────────────────────────────────────────
     if(NOT FUZZ_NAME)
-        message(FATAL_ERROR "fuzzmate_add_fuzzer: NAME is required")
+        message(FATAL_ERROR "absolution_add_fuzzer: NAME is required")
     endif()
     if(NOT FUZZ_TARGETS)
-        message(FATAL_ERROR "fuzzmate_add_fuzzer: TARGETS is required")
+        message(FATAL_ERROR "absolution_add_fuzzer: TARGETS is required")
     endif()
     if(NOT FUZZ_ENTRY)
         set(FUZZ_ENTRY "AbsolutionTestOneInput")
@@ -174,15 +174,15 @@ function(fuzzmate_add_fuzzer)
     endif()
 
     # ── Working directory ─────────────────────────────────────────────────────
-    set(_FUZZ_DIR "${CMAKE_CURRENT_BINARY_DIR}/_fuzzmate/${FUZZ_NAME}")
+    set(_FUZZ_DIR "${CMAKE_CURRENT_BINARY_DIR}/_absolution/${FUZZ_NAME}")
     file(MAKE_DIRECTORY "${_FUZZ_DIR}")
 
     set(_FUZZER_C      "${_FUZZ_DIR}/fuzzer.c")
     set(_REDEF_FILE    "${_FUZZ_DIR}/fuzzer.redef")
     set(_SEED_FILE     "${_FUZZ_DIR}/fuzzer.seed")
     set(_OBJ_LIST      "${_FUZZ_DIR}/objfiles.txt")
-    set(_FLAGS_FILE    "${_FUZZ_DIR}/fuzzmate_flags.rsp")
-    set(_TARGETS_FILE  "${_FUZZ_DIR}/fuzzmate_targets.txt")
+    set(_FLAGS_FILE    "${_FUZZ_DIR}/absolution_flags.rsp")
+    set(_TARGETS_FILE  "${_FUZZ_DIR}/absolution_targets.txt")
     set(_REDEF_STAMP   "${_FUZZ_DIR}/redef.stamp")
 
     # ── Resolve target paths ──────────────────────────────────────────────────
@@ -206,7 +206,7 @@ function(fuzzmate_add_fuzzer)
     set(_visited "")
 
     if(FUZZ_LINK_LIBRARIES)
-        _fuzzmate_collect_all("${FUZZ_LINK_LIBRARIES}"
+        _absolution_collect_all("${FUZZ_LINK_LIBRARIES}"
             _dep_sources _absorbed_targets
             _exe_incs _exe_defs _exe_opts _exe_link_opts
             _exe_passthrough _visited)
@@ -247,11 +247,11 @@ function(fuzzmate_add_fuzzer)
         CONTENT "$<JOIN:$<TARGET_OBJECTS:${_OBJ_LIB}>,\n>\n"
     )
 
-    # ── Step 2: Run fuzzmate — incremental via add_custom_command ─────────────
+    # ── Step 2: Run absolution — incremental via add_custom_command ─────────────
     # The targets list is written at generation time (no genexes needed).
     # Compiler flags are written one-per-line via genex and read by
-    # RunFuzzmate.cmake at build time, which passes them as individual
-    # arguments to fuzzmate after the '--' separator.
+    # RunAbsolution.cmake at build time, which passes them as individual
+    # arguments to absolution after the '--' separator.
     string(REPLACE ";" "\n" _targets_newline "${_REL_TARGETS}")
     file(GENERATE
         OUTPUT  "${_TARGETS_FILE}"
@@ -277,7 +277,7 @@ $<JOIN:$<TARGET_PROPERTY:${_OBJ_LIB},COMPILE_OPTIONS>,\n>
     add_custom_command(
         OUTPUT  "${_FUZZER_C}" "${_REDEF_FILE}" "${_SEED_FILE}"
         COMMAND "${CMAKE_COMMAND}"
-            "-DFUZZMATE=${FUZZMATE_EXECUTABLE}"
+            "-DABSOLUTION=${ABSOLUTION_EXECUTABLE}"
             "-DTARGETS_FILE=${_TARGETS_FILE}"
             "-DOUT_C=${_FUZZER_C}"
             "-DREDEF=${_REDEF_FILE}"
@@ -286,10 +286,10 @@ $<JOIN:$<TARGET_PROPERTY:${_OBJ_LIB},COMPILE_OPTIONS>,\n>
             "-DINVARIANT=${_abs_inv}"
             "-DFLAGS_FILE=${_FLAGS_FILE}"
             "-DWORK_DIR=${CMAKE_SOURCE_DIR}"
-            -P "${_FUZZMATE_MODULE_DIR}/RunFuzzmate.cmake"
+            -P "${_ABSOLUTION_MODULE_DIR}/RunAbsolution.cmake"
         DEPENDS ${_ABS_TARGETS} $<TARGET_OBJECTS:${_OBJ_LIB}> "${_FLAGS_FILE}" "${_TARGETS_FILE}"
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-        COMMENT "[fuzzmate] Generating harness for ${FUZZ_NAME}"
+        COMMENT "[absolution] Generating harness for ${FUZZ_NAME}"
         VERBATIM
     )
     add_custom_target(${_GENERATE_TARGET}
@@ -297,9 +297,9 @@ $<JOIN:$<TARGET_PROPERTY:${_OBJ_LIB},COMPILE_OPTIONS>,\n>
     )
 
     set_target_properties(${_GENERATE_TARGET} PROPERTIES
-        FUZZMATE_FUZZER_C  "${_FUZZER_C}"
-        FUZZMATE_REDEF     "${_REDEF_FILE}"
-        FUZZMATE_SEED      "${_SEED_FILE}"
+        ABSOLUTION_FUZZER_C  "${_FUZZER_C}"
+        ABSOLUTION_REDEF     "${_REDEF_FILE}"
+        ABSOLUTION_SEED      "${_SEED_FILE}"
     )
 
     add_dependencies(${_GENERATE_TARGET} ${_OBJ_LIB})
@@ -324,12 +324,12 @@ $<JOIN:$<TARGET_PROPERTY:${_OBJ_LIB},COMPILE_OPTIONS>,\n>
         COMMAND "${CMAKE_COMMAND}"
             "-DREDEF_FILE=${_REDEF_FILE}"
             "-DOBJ_LIST_FILE=${_OBJ_LIST}"
-            "-DOBJCOPY=${FUZZMATE_OBJCOPY}"
-            -P "${_FUZZMATE_MODULE_DIR}/ApplyRedef.cmake"
+            "-DOBJCOPY=${ABSOLUTION_OBJCOPY}"
+            -P "${_ABSOLUTION_MODULE_DIR}/ApplyRedef.cmake"
         COMMAND "${CMAKE_COMMAND}" -E touch "${_REDEF_STAMP}"
         DEPENDS "${_REDEF_FILE}" "${_OBJ_LIST}"
         WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
-        COMMENT "[fuzzmate] Applying symbol redefinitions for ${FUZZ_NAME}"
+        COMMENT "[absolution] Applying symbol redefinitions for ${FUZZ_NAME}"
         VERBATIM
     )
     add_custom_target(${_REDEF_TARGET}

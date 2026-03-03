@@ -1,3 +1,3 @@
 # Compiler flags for the short_enums test.
-# These flags are passed to fuzzmate via -f <flag> to configure arocc.
+# These flags are passed to absolution via -f <flag> to configure arocc.
 -fshort-enums

@@ -6,7 +6,7 @@
 #endif
 
 /* ── Global decoder configuration ─────────────────────────────────
- * fuzzmate will sample this struct from fuzzer input so we exercise
+ * absolution will sample this struct from fuzzer input so we exercise
  * the decoder under many different configuration states.             */
 static struct decoder_config config = {
     .max_payload      = PROTO_MAX_PAYLOAD,
