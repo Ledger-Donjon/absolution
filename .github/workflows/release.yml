@@ -8,6 +8,12 @@ on:
         required: true
         type: string
 
+permissions:
+  contents: read
+
+env:
+  RELEASE_TAG: ${{ inputs.release_tag }}
+
 jobs:
   build:
     environment: release
@@ -30,8 +36,8 @@ jobs:
       - name: Create release tarball
         run: |
           _os="${{ matrix.os == 'ubuntu-latest' && 'linux' || 'macos' }}"
-          _name="absolution-${{ inputs.release_tag }}-${_os}-${{ matrix.optimize }}"
-          tar czf "${_name}.tar.gz" -C zig-out . 2>/dev/null || tar czf "${_name}.tar.gz" -C . .
+          _name="absolution-${RELEASE_TAG}-${_os}-${{ matrix.optimize }}"
+          tar czf "${_name}.tar.gz" -C zig-out . 2>/dev/null
       - name: Upload tarball
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f #v7.0.0
         with:
