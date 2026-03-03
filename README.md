@@ -82,3 +82,7 @@ bash scripts/integration.sh   # In depth integration tests
 - **[USAGE.md](USAGE.md)** — Detailed usage guide with examples and behavior reference
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — Code organization and development workflow
 - **[example/protocol_parser/](example/protocol_parser/)** — Complete CMake integration example
+
+## Incoming features before 1.0.0
+- Migrate invariant syntax from zon to rust PEG defined syntax
+- MacOs support

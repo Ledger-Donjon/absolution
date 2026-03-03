@@ -1,0 +1,33 @@
+---
+name: Setup Zig
+description: Install the Zig version specified in build.zig.zon
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        version=$(grep 'minimum_zig_version' build.zig.zon | sed 's/.*"\(.*\)".*/\1/')
+
+        case "$RUNNER_OS" in
+          Linux) os=linux ;;
+          macOS) os=macos ;;
+          *) echo "Unsupported OS: $RUNNER_OS" >&2; exit 1 ;;
+        esac
+
+        case "$RUNNER_ARCH" in
+          X64)   arch=x86_64  ;;
+          ARM64) arch=aarch64 ;;
+          *) echo "Unsupported arch: $RUNNER_ARCH" >&2; exit 1 ;;
+        esac
+
+        url="https://ziglang.org/download/${version}/zig-${arch}-${os}-${version}.tar.xz"
+        echo "Installing Zig ${version} from ${url}"
+
+        install_dir="${RUNNER_TOOL_CACHE:-$HOME/.cache}/zig"
+        mkdir -p "$install_dir"
+        curl -sSfL "$url" | tar -xJ -C "$install_dir"
+
+        # Tarball top-level dir is zig-<arch>-<os>-<version>
+        zig_dir="${install_dir}/zig-${arch}-${os}-${version}"
+        echo "${zig_dir}" >> "$GITHUB_PATH"

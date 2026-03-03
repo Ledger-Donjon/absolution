@@ -1,0 +1,39 @@
+---
+name: 🚀 Release
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Tag to release (e.g. v1.0.0)"
+        required: true
+        type: string
+
+jobs:
+  build:
+    environment: release
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        optimize: [ReleaseSafe, ReleaseFast]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.release_tag }}
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: main
+          sparse-checkout: .github/actions
+          path: _actions
+      - uses: ./_actions/.github/actions/setup-zig
+      - run: zig build -Doptimize=${{ matrix.optimize }}
+      - name: Create release tarball
+        run: |
+          _os="${{ matrix.os == 'ubuntu-latest' && 'linux' || 'macos' }}"
+          _name="absolution-${{ inputs.release_tag }}-${_os}-${{ matrix.optimize }}"
+          tar czf "${_name}.tar.gz" -C zig-out . 2>/dev/null || tar czf "${_name}.tar.gz" -C . .
+      - name: Upload tarball
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f #v7.0.0
+        with:
+          name: release-${{ matrix.os }}-${{ matrix.optimize }}
+          path: "absolution-${{ inputs.release_tag }}-${{ matrix.os == 'ubuntu-latest' && 'linux' || 'macos' }}-${{ matrix.optimize }}.tar.gz"
