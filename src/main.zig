@@ -147,7 +147,5 @@ pub fn main() !void {
     if (opts.zon) |zon_path| try writeInvariant(gpa, globals, zon_path);
 
     // Optional: Generate an arbtrary seed
-    if (opts.seed) |seed_path| {
-        try writeSeed(seed_path, needed_bytes);
-    }
+    if (opts.seed) |seed_path| try writeSeed(seed_path, needed_bytes);
 }

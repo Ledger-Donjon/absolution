@@ -10,7 +10,6 @@
         .offset_bits = 0,
         .bit_width = 1920,
         .dims = .{},
-        .dim_positions = .{},
         .is_padding = true,
         .domain = .top,
     }},

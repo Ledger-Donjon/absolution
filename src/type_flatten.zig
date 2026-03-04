@@ -159,7 +159,6 @@ pub fn flattenType(
         .offset_bits = offset_bits,
         .bit_width = bits,
         .dims = dims_info,
-        .dim_positions = positions_info,
         .is_padding = false,
         .domain = domain,
     });
@@ -238,8 +237,6 @@ fn addPadding(
     pad_index.* += 1;
     const dims_copy = try dim_stack.cloneDims(allocator);
     errdefer allocator.free(dims_copy);
-    const positions_copy = try dim_stack.clonePositions(allocator);
-    errdefer allocator.free(positions_copy);
     const container_copy = try allocator.dupe(u8, prefix);
     errdefer allocator.free(container_copy);
     try fields.append(allocator, .{
@@ -248,7 +245,6 @@ fn addPadding(
         .offset_bits = pad_offset_bits,
         .bit_width = bits,
         .dims = dims_copy,
-        .dim_positions = positions_copy,
         .is_padding = true,
         .domain = .top,
     });
