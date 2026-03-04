@@ -13,6 +13,5 @@
         .dim_positions = .{},
         .is_padding = false,
         .domain = .top,
-        .domain_owned = false,
     }},
 }}

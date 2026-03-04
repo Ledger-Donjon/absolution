@@ -139,6 +139,7 @@ pub fn writeFuzzerC(
     out_path: []const u8,
     redef_path: []const u8,
     entry_name: []const u8,
+    func_symbols: []const []const u8,
 ) !void {
     var file = try std.fs.cwd().createFile(out_path, .{ .truncate = true });
     defer file.close();
@@ -165,6 +166,13 @@ pub fn writeFuzzerC(
     const globals_size_define = try std.fmt.allocPrint(allocator, "#define ABSOLUTION_GLOBALS_SIZE {d}\n\n", .{needed_bytes});
     defer allocator.free(globals_size_define);
     try file.writeAll(globals_size_define);
+
+    for (func_symbols) |sym| {
+        const func_decl = try std.fmt.allocPrint(allocator, "extern void {s}(void);\n", .{sym});
+        defer allocator.free(func_decl);
+        try file.writeAll(func_decl);
+    }
+    if (func_symbols.len > 0) try file.writeAll("\n");
 
     for (globals) |g| {
         // Skip static variables from header files - they don't produce object

@@ -37,27 +37,13 @@ pub const Field = struct {
     is_padding: bool = false,
     /// Value domain.
     domain: Domain = .top,
-    /// Whether the domain data is owned by this field (and should be freed).
-    domain_owned: bool = false,
 
     pub fn deinit(self: *Field, allocator: std.mem.Allocator) void {
         allocator.free(self.name);
         if (self.pad_container) |c| allocator.free(c);
         allocator.free(self.dims);
         allocator.free(self.dim_positions);
-        if (self.domain_owned) {
-            switch (self.domain) {
-                .values => |vals| {
-                    for (vals) |v| allocator.free(v);
-                    allocator.free(vals);
-                },
-                .pointers => |ptrs| {
-                    for (ptrs) |p| allocator.free(p);
-                    allocator.free(ptrs);
-                },
-                else => {},
-            }
-        }
+        // domain is arena-managed, not freed here
     }
 };
 

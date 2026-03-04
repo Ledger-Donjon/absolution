@@ -15,7 +15,6 @@
                 .dim_positions = .{},
                 .is_padding = false,
                 .domain = .top,
-                .domain_owned = false,
             },
             .{
                 .name = "._pad0",
@@ -26,7 +25,6 @@
                 .dim_positions = .{},
                 .is_padding = true,
                 .domain = .top,
-                .domain_owned = false,
             },
             .{
                 .name = ".another_regular",
@@ -37,7 +35,6 @@
                 .dim_positions = .{},
                 .is_padding = false,
                 .domain = .top,
-                .domain_owned = false,
             },
         },
     },
@@ -56,7 +53,6 @@
             .dim_positions = .{},
             .is_padding = false,
             .domain = .top,
-            .domain_owned = false,
         }, .{
             .name = ".y",
             .pad_container = null,
@@ -66,7 +62,6 @@
             .dim_positions = .{},
             .is_padding = false,
             .domain = .top,
-            .domain_owned = false,
         } },
     },
     .{
@@ -84,7 +79,6 @@
             .dim_positions = .{},
             .is_padding = false,
             .domain = .top,
-            .domain_owned = false,
         }},
     },
 }

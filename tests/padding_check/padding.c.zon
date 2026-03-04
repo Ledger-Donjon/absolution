@@ -14,7 +14,6 @@
             .dim_positions = .{},
             .is_padding = false,
             .domain = .top,
-            .domain_owned = false,
         },
         .{
             .name = ".b",
@@ -25,7 +24,6 @@
             .dim_positions = .{},
             .is_padding = false,
             .domain = .top,
-            .domain_owned = false,
         },
         .{
             .name = ".c",
@@ -36,7 +34,6 @@
             .dim_positions = .{},
             .is_padding = false,
             .domain = .top,
-            .domain_owned = false,
         },
         .{
             .name = "._pad0",
@@ -47,7 +44,6 @@
             .dim_positions = .{},
             .is_padding = true,
             .domain = .top,
-            .domain_owned = false,
         },
     },
 }}

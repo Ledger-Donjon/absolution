@@ -113,22 +113,33 @@ pub fn main() !void {
     defer if (builtin.mode != .ReleaseFast) absolution.Parser.freeGlobals(allocator, &globals);
 
     // Optional invariant
-    var inv: ?invariant.Invariant = null;
+    var res: invariant.ApplyResult = .{ .func_symbols = &.{} };
     if (opts.invariant_path) |inv_path| {
-        inv = try invariant.loadZon(allocator, inv_path);
-        defer if (builtin.mode != .ReleaseFast) inv.?.deinit(allocator);
+        var inv = invariant.loadZon(allocator, inv_path) catch |err| {
+            switch (err) {
+                error.ParseZon => std.debug.print("Invalid format of input invariant\n", .{}),
+                else => {},
+            }
+            return err;
+        };
+        // tied to enclosing scope
+        defer if (builtin.mode != .ReleaseFast) inv.deinit();
+        res = try invariant.applyToGlobals(allocator, &globals, &inv);
     }
 
     // Code generation
-    const needed_bytes = try absolution.cgen.generateFuzzer(
-        allocator,
-        &globals,
-        opts.redef,
-        opts.out_c,
-        opts.zon,
-        inv,
-        opts.entry,
-    );
+    const needed_bytes = try absolution.cgen.generateFuzzer(allocator, &globals, opts.redef, opts.out_c, opts.entry, res.func_symbols);
+
+    if (opts.zon) |zon_path| {
+        var aw: std.Io.Writer.Allocating = .init(allocator);
+        try std.zon.stringify.serialize(globals.items, .{ .whitespace = true }, &aw.writer);
+        try aw.writer.writeByte('\n'); // Ensure trailing newline
+        const zon_bytes = try aw.toOwnedSlice();
+        defer allocator.free(zon_bytes);
+        var file = try std.fs.cwd().createFile(zon_path, .{ .truncate = true });
+        defer file.close();
+        try file.writeAll(zon_bytes);
+    }
 
     // Optional seed
     if (opts.seed) |seed_path| {

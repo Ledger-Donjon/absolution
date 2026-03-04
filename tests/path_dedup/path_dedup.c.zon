@@ -13,7 +13,6 @@
         .dim_positions = .{},
         .is_padding = false,
         .domain = .top,
-        .domain_owned = false,
     }, .{
         .name = ".value",
         .pad_container = null,
@@ -23,7 +22,6 @@
         .dim_positions = .{},
         .is_padding = false,
         .domain = .top,
-        .domain_owned = false,
     } },
 }, .{
     .name = "handler_info",
@@ -41,7 +39,6 @@
             .dim_positions = .{},
             .is_padding = false,
             .domain = .top,
-            .domain_owned = false,
         },
         .{
             .name = ".state.value",
@@ -52,7 +49,6 @@
             .dim_positions = .{},
             .is_padding = false,
             .domain = .top,
-            .domain_owned = false,
         },
         .{
             .name = ".flags",
@@ -63,7 +59,6 @@
             .dim_positions = .{},
             .is_padding = false,
             .domain = .top,
-            .domain_owned = false,
         },
     },
 } }

@@ -14,7 +14,6 @@
             .dim_positions = .{},
             .is_padding = false,
             .domain = .top,
-            .domain_owned = false,
         },
         .{
             .name = ".c",
@@ -25,7 +24,6 @@
             .dim_positions = .{},
             .is_padding = false,
             .domain = .top,
-            .domain_owned = false,
         },
         .{
             .name = "._pad0",
@@ -36,7 +34,6 @@
             .dim_positions = .{},
             .is_padding = true,
             .domain = .top,
-            .domain_owned = false,
         },
         .{
             .name = ".d.sub_a",
@@ -47,7 +44,6 @@
             .dim_positions = .{},
             .is_padding = false,
             .domain = .top,
-            .domain_owned = false,
         },
         .{
             .name = ".d.sub_b.sub_sub_a",
@@ -58,7 +54,6 @@
             .dim_positions = .{},
             .is_padding = false,
             .domain = .top,
-            .domain_owned = false,
         },
         .{
             .name = ".d.sub_b_pad1",
@@ -69,7 +64,6 @@
             .dim_positions = .{},
             .is_padding = true,
             .domain = .top,
-            .domain_owned = false,
         },
         .{
             .name = ".d.sub_b.sub_sub_b",
@@ -80,7 +74,6 @@
             .dim_positions = .{},
             .is_padding = false,
             .domain = .top,
-            .domain_owned = false,
         },
         .{
             .name = ".e",
@@ -91,7 +84,6 @@
             .dim_positions = .{2},
             .is_padding = false,
             .domain = .top,
-            .domain_owned = false,
         },
         .{
             .name = ".f",
@@ -102,7 +94,6 @@
             .dim_positions = .{},
             .is_padding = false,
             .domain = .top,
-            .domain_owned = false,
         },
     },
 }}

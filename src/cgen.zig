@@ -25,26 +25,12 @@ pub fn generateFuzzer(
     globals: *std.ArrayList(Builder.ParsedGlobal),
     redef_path: []const u8,
     out_c_path: []const u8,
-    zon_path: ?[]const u8,
-    inv: ?invariant.Invariant,
     entry_name: []const u8,
+    func_symbols: []const []const u8,
 ) !usize {
-    if (inv) |spec| {
-        try invariant.applyToGlobals(allocator, globals, spec);
-    }
-
     const needed_bytes = neededBytesFromGlobals(globals.items);
 
-    try Emit.writeFuzzerC(allocator, globals.items, needed_bytes, out_c_path, redef_path, entry_name);
-
-    if (zon_path) |zp| {
-        var aw: std.Io.Writer.Allocating = .init(allocator);
-        try std.zon.stringify.serialize(globals.items, .{ .whitespace = true }, &aw.writer);
-        try aw.writer.writeByte('\n'); // Ensure trailing newline
-        const zon_bytes = try aw.toOwnedSlice();
-        defer allocator.free(zon_bytes);
-        try Builder.writeFile(zp, zon_bytes);
-    }
+    try Emit.writeFuzzerC(allocator, globals.items, needed_bytes, out_c_path, redef_path, entry_name, func_symbols);
 
     return needed_bytes;
 }

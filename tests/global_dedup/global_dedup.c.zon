@@ -13,7 +13,6 @@
         .dim_positions = .{},
         .is_padding = false,
         .domain = .top,
-        .domain_owned = false,
     }, .{
         .name = ".y",
         .pad_container = null,
@@ -23,6 +22,5 @@
         .dim_positions = .{},
         .is_padding = false,
         .domain = .top,
-        .domain_owned = false,
     } },
 }}
