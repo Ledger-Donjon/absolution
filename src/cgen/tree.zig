@@ -45,6 +45,27 @@ pub const Field = struct {
         allocator.free(self.dim_positions);
         // domain is arena-managed, not freed here
     }
+
+    pub fn updateDomain(self: *Field, arena: std.mem.Allocator, domain: Domain) !void {
+        self.domain =
+            switch (domain) {
+                .top => .top,
+                .values => |vals| blk: {
+                    const dup_vals = try arena.alloc([]const u8, vals.len);
+                    for (vals, 0..) |v, i| {
+                        dup_vals[i] = try arena.dupe(u8, v);
+                    }
+                    break :blk .{ .values = dup_vals };
+                },
+                .pointers => |ptrs| blk: {
+                    const dup_ptrs = try arena.alloc([]const u8, ptrs.len);
+                    for (ptrs, 0..) |p, i| {
+                        dup_ptrs[i] = try arena.dupe(u8, p);
+                    }
+                    break :blk .{ .pointers = dup_ptrs };
+                },
+            };
+    }
 };
 
 /// A translation-unit global with its flattened fields.

@@ -6,7 +6,6 @@
 const tree = @import("cgen/tree.zig");
 const builder = @import("cgen/builder.zig");
 const emit = @import("cgen/emit.zig");
-const invariant = @import("invariant.zig");
 const std = @import("std");
 
 /// Public re-exports for direct access to submodules.
@@ -22,7 +21,7 @@ pub const Emit = emit;
 /// Returns the number of fuzzer input bytes needed for sampling.
 pub fn generateFuzzer(
     allocator: std.mem.Allocator,
-    globals: *std.ArrayList(Builder.ParsedGlobal),
+    globals: std.ArrayList(Builder.ParsedGlobal),
     redef_path: []const u8,
     out_c_path: []const u8,
     entry_name: []const u8,

@@ -7,4 +7,4 @@
 
 pub const Parser = @import("Parser.zig");
 pub const cgen = @import("cgen.zig");
-pub const invariant = @import("invariant.zig");
+pub const Invariant = @import("Invariant.zig");

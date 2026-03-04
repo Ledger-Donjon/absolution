@@ -2,16 +2,15 @@ const builtin = @import("builtin");
 const std = @import("std");
 const clap = @import("clap");
 const absolution = @import("absolution");
-const invariant = absolution.invariant;
+const Invariant = absolution.Invariant;
+const Global = absolution.Parser.Global;
 
-fn writeSeed(
-    path: []const u8,
-    size: usize,
-) !void {
+fn writeSeed(path: []const u8, size: usize) !void {
     var file = try std.fs.cwd().createFile(path, .{ .truncate = true });
     defer file.close();
 
     const chunk_size = 4096;
+    // we use undefine memory as the seed content does not matter
     const chunk: [chunk_size]u8 = undefined;
 
     var remaining = size;
@@ -20,6 +19,17 @@ fn writeSeed(
         try file.writeAll(chunk[0..n]);
         remaining -= n;
     }
+}
+
+fn writeInvariant(allocator: std.mem.Allocator, globals: std.ArrayList(Global), zon_path: []const u8) !void {
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    try std.zon.stringify.serialize(globals.items, .{ .whitespace = true }, &aw.writer);
+    try aw.writer.writeByte('\n'); // Ensure trailing newline
+    const zon_bytes = try aw.toOwnedSlice();
+    defer allocator.free(zon_bytes);
+    var file = try std.fs.cwd().createFile(zon_path, .{ .truncate = true });
+    defer file.close();
+    try file.writeAll(zon_bytes);
 }
 
 const Options = struct {
@@ -93,29 +103,30 @@ fn parseArgs(allocator: std.mem.Allocator) !Options {
 
 pub fn main() !void {
     // Allocators
-    var gpa = std.heap.GeneralPurposeAllocator(.{ .stack_trace_frames = 8 }){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
-    var arena: std.heap.ArenaAllocator = .init(allocator);
+    var runtime_allocator = std.heap.GeneralPurposeAllocator(.{ .stack_trace_frames = 8 }){};
+    defer _ = runtime_allocator.deinit();
+    const gpa = runtime_allocator.allocator();
+    var arena: std.heap.ArenaAllocator = .init(gpa);
     defer arena.deinit();
 
     // CLI
-    const opts = parseArgs(allocator) catch return;
-    defer allocator.free(opts.targets);
-    defer allocator.free(opts.cflags);
+    const opts = parseArgs(gpa) catch return;
+    defer gpa.free(opts.targets);
+    defer gpa.free(opts.cflags);
 
     // Parser setup
-    var parser = try absolution.Parser.init(allocator, arena.allocator(), opts.cflags);
+    var parser = try absolution.Parser.init(gpa, arena.allocator(), opts.cflags);
     defer if (builtin.mode != .ReleaseFast) parser.deinit();
 
     // Retrieve Globals from targets
     var globals = try parser.collectGlobals(opts.targets);
-    defer if (builtin.mode != .ReleaseFast) absolution.Parser.freeGlobals(allocator, &globals);
+    defer if (builtin.mode != .ReleaseFast) absolution.Parser.freeGlobals(gpa, &globals);
 
-    // Optional invariant
-    var res: invariant.ApplyResult = .{ .func_symbols = &.{} };
+    // Optional: retrieve invariant and apply constraints
+    var func_symbols: []const []const u8 = &.{};
+    defer gpa.free(func_symbols);
     if (opts.invariant_path) |inv_path| {
-        var inv = invariant.loadZon(allocator, inv_path) catch |err| {
+        var inv = Invariant.init(gpa, inv_path) catch |err| {
             switch (err) {
                 error.ParseZon => std.debug.print("Invalid format of input invariant\n", .{}),
                 else => {},
@@ -124,24 +135,18 @@ pub fn main() !void {
         };
         // tied to enclosing scope
         defer if (builtin.mode != .ReleaseFast) inv.deinit();
-        res = try invariant.applyToGlobals(allocator, &globals, &inv);
+        const res = try inv.applyToGlobals(gpa, arena.allocator(), globals);
+        globals = res.globals;
+        func_symbols = res.func_symbols;
     }
 
     // Code generation
-    const needed_bytes = try absolution.cgen.generateFuzzer(allocator, &globals, opts.redef, opts.out_c, opts.entry, res.func_symbols);
+    const needed_bytes = try absolution.cgen.generateFuzzer(gpa, globals, opts.redef, opts.out_c, opts.entry, func_symbols);
 
-    if (opts.zon) |zon_path| {
-        var aw: std.Io.Writer.Allocating = .init(allocator);
-        try std.zon.stringify.serialize(globals.items, .{ .whitespace = true }, &aw.writer);
-        try aw.writer.writeByte('\n'); // Ensure trailing newline
-        const zon_bytes = try aw.toOwnedSlice();
-        defer allocator.free(zon_bytes);
-        var file = try std.fs.cwd().createFile(zon_path, .{ .truncate = true });
-        defer file.close();
-        try file.writeAll(zon_bytes);
-    }
+    // Optional: Save invariant to file
+    if (opts.zon) |zon_path| try writeInvariant(gpa, globals, zon_path);
 
-    // Optional seed
+    // Optional: Generate an arbtrary seed
     if (opts.seed) |seed_path| {
         try writeSeed(seed_path, needed_bytes);
     }

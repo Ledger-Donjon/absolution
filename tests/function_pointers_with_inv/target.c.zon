@@ -13,10 +13,9 @@
         .dim_positions = .{},
         .is_padding = false,
         .domain = .{ .values = .{
-            "0x00",
-            "0x01",
-            "0x0A",
-            "0x64",
+            "\x00",
+            "\x01",
+            "d",
         } },
     }},
 }, .{

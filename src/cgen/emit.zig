@@ -295,9 +295,10 @@ fn emitSampler(allocator: std.mem.Allocator, globals: []const Parser.Global, fil
                     try file.writeAll("[] = { ");
                     for (vals, 0..) |v, vi| {
                         if (vi > 0) try file.writeAll(", ");
-                        for (v, 0..) |b, bi| {
+                        for (0..bytes) |bi| {
                             if (bi > 0) try file.writeAll(", ");
-                            const byte_str = try std.fmt.bufPrint(&num_buf, "0x{X:0>2}", .{b});
+                            const byte_val: u8 = if (bi < v.len) v[bi] else 0;
+                            const byte_str = try std.fmt.bufPrint(&num_buf, "0x{X:0>2}", .{byte_val});
                             try file.writeAll(byte_str);
                         }
                     }

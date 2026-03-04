@@ -9,76 +9,47 @@ const Parser = @import("Parser.zig");
 
 /// Parsed invariant specification containing domain constraints for globals.
 /// Owns all memory in `globals`.
-pub const Invariant = struct {
-    globals: []tree.Global,
-    arena: std.heap.ArenaAllocator,
-
-    /// Caller must pass the same allocator used in `loadZon`.
-    pub fn deinit(self: Invariant) void {
-        self.arena.deinit();
-    }
-};
+const Invariant = @This();
+globals: []tree.Global,
+arena: std.heap.ArenaAllocator,
 
 /// Load an invariant from a `.zon` file.
 /// All returned memory is owned by the caller through `Invariant`.
-pub fn loadZon(gpa: std.mem.Allocator, path: []const u8) !Invariant {
+pub fn init(gpa: std.mem.Allocator, path: []const u8) !Invariant {
     var arena: std.heap.ArenaAllocator = .init(gpa);
-    errdefer arena.deinit();
-    var allocator = arena.allocator();
+    // zon will allocate an array and elements in depths
+    // it is easier to destroy arena
+    const zon_allocator = arena.allocator();
 
     const bytes = try std.fs.cwd().readFileAllocOptions(
-        allocator,
+        gpa,
         path,
         std.math.maxInt(usize),
         null,
         std.mem.Alignment.@"8",
         0,
     );
-    defer allocator.free(bytes);
+    defer gpa.free(bytes);
 
     var diag: std.zon.parse.Diagnostics = .{};
-    defer diag.deinit(allocator);
+    defer diag.deinit(zon_allocator);
 
-    const parsed = try std.zon.parse.fromSlice(
+    const globals = try std.zon.parse.fromSlice(
         []tree.Global,
-        allocator,
+        zon_allocator,
         bytes,
         &diag,
         .{ .ignore_unknown_fields = false },
     );
 
-    return .{ .globals = parsed, .arena = arena };
+    return .{ .globals = globals, .arena = arena };
 }
 
-/// Clone a domain into `allocator`.
-/// Returns newly allocated domain.
-fn cloneDomain(arena: std.mem.Allocator, domain: tree.Domain) !Parser.Domain {
-    return switch (domain) {
-        .top => .top,
-        .values => |vals| blk: {
-            const dup_vals = try arena.alloc([]const u8, vals.len);
-            for (vals, 0..) |v, i| {
-                dup_vals[i] = try arena.dupe(u8, v);
-            }
-            break :blk .{ .values = dup_vals };
-        },
-        .pointers => |ptrs| blk: {
-            const dup_ptrs = try arena.alloc([]const u8, ptrs.len);
-            for (ptrs, 0..) |p, i| {
-                dup_ptrs[i] = try arena.dupe(u8, p);
-            }
-            break :blk .{ .pointers = dup_ptrs };
-        },
-    };
+/// Caller must pass the same allocator used in `loadZon`.
+pub fn deinit(self: *Invariant) void {
+    self.arena.deinit();
+    self.* = undefined;
 }
-
-/// Result of applying invariant domains to parsed globals.
-pub const ApplyResult = struct {
-    /// Pointer-target symbols not found among known globals.
-    /// Presumed to be function symbols that need forward declarations.
-    /// Caller owns the slice; individual strings reference the invariant arena.
-    func_symbols: []const []const u8,
-};
 
 /// Apply invariant domains to parsed globals.
 /// Mutates `globals` in-place and returns symbols that need forward
@@ -90,10 +61,11 @@ pub const ApplyResult = struct {
 /// - Returned `func_symbols` slice is owned by caller (allocated via `gpa`);
 ///   the individual strings point into the invariant arena.
 pub fn applyToGlobals(
+    self: Invariant,
     gpa: std.mem.Allocator,
-    globals: *std.ArrayList(Parser.Global),
-    inv: *Invariant,
-) error{ OutOfMemory, InvalidPointerTarget }!ApplyResult {
+    arena: std.mem.Allocator,
+    globals: std.ArrayList(Parser.Global),
+) !struct { globals: std.ArrayList(Parser.Global), func_symbols: []const []const u8 } {
     // Build symbol table and global lookup.
     var global_map: std.StringHashMap(*Parser.Global) = .init(gpa);
     defer global_map.deinit();
@@ -112,9 +84,8 @@ pub fn applyToGlobals(
     var func_syms: std.StringHashMap(void) = .init(gpa);
     defer func_syms.deinit();
 
-    const arena = inv.arena.allocator();
     // Apply invariant globals
-    for (inv.globals) |g| {
+    for (self.globals) |g| {
         const target = global_map.get(g.name) orelse continue;
 
         var field_map: std.StringHashMap(*Parser.Field) = .init(gpa);
@@ -127,12 +98,11 @@ pub fn applyToGlobals(
         }
 
         for (g.fields) |f| {
-            const mf = field_map.get(f.name) orelse continue;
-            const cloned = try cloneDomain(arena, f.domain);
-            mf.domain = cloned;
+            var mf = field_map.get(f.name) orelse continue;
+            try mf.updateDomain(arena, f.domain);
 
-            if (cloned == .pointers) {
-                for (cloned.pointers) |ptr_name| {
+            if (mf.domain == .pointers) {
+                for (mf.domain.pointers) |ptr_name| {
                     if (!symbols.contains(ptr_name)) {
                         std.debug.print("warning: pointer target '{s}' not found among globals, assuming function\n", .{ptr_name});
                         try func_syms.put(ptr_name, {});
@@ -148,7 +118,7 @@ pub fn applyToGlobals(
     while (it.next()) |key| : (i += 1) {
         result[i] = key.*;
     }
-    return .{ .func_symbols = result };
+    return .{ .globals = globals, .func_symbols = result };
 }
 
 test "applyToGlobals updates domains" {
