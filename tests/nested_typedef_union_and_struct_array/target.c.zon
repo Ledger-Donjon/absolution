@@ -1,0 +1,16 @@
+.{.{
+    .name = "astruct",
+    .source_file = "tests/nested_typedef_union_and_struct_array/target.c",
+    .size_bytes = 240,
+    .is_static = false,
+    .dims = .{},
+    .fields = .{.{
+        .name = "._pad0",
+        .pad_container = ".",
+        .offset_bits = 0,
+        .bit_width = 1920,
+        .dims = .{},
+        .is_padding = true,
+        .domain = .top,
+    }},
+}}
