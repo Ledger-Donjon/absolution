@@ -152,7 +152,6 @@ fields:
             .dim_positions = .{},
             .is_padding = false,
             .domain = .top,
-            .domain_owned = false,
         },
         // ...
     },
@@ -186,7 +185,6 @@ fields:
             .dim_positions = .{},
             .is_padding = false,
             .domain = .top,         // Full 4 bytes from fuzzer
-            .domain_owned = false,
         },
         .{
             .name = ".flags",
@@ -197,7 +195,6 @@ fields:
             .dim_positions = .{},
             .is_padding = false,
             .domain = .{ .values = .{ "0x00", "0x01", "0x03" } },  // Only these values
-            .domain_owned = false,
         },
     },
 }}
@@ -236,7 +233,6 @@ Example for `Config configs[10]` with `int values[5]` (struct size 8 bytes):
             .dim_positions = .{},
             .is_padding = false,
             .domain = .top,
-            .domain_owned = false,
         },
     },
 }}

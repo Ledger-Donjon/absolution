@@ -61,11 +61,17 @@ for C_FILE in $C_FILES; do
             EXTRA_ARGS+=("$line")
         done < "$FLAGS_FILE"
     fi
+    # Collect invariant file from .in sidecar (matches integration.py behavior)
+    INVARIANT_ARGS=()
+    if [ -f "${C_FILE}.in" ]; then
+        INVARIANT_ARGS=(-i "${C_FILE}.in")
+    fi
     
     # Run absolution to generate the .zon file
     if [ ${#EXTRA_ARGS[@]} -gt 0 ]; then
         "$ABSOLUTION" \
             --targets "$C_FILE" \
+            "${INVARIANT_ARGS[@]}" \
             --zon "$TMPDIR/${BASENAME}.zon" \
             --out "$TMPDIR/${BASENAME}.fuzzer.c" \
             --redef "$TMPDIR/${BASENAME}.redef.txt" \
@@ -73,6 +79,7 @@ for C_FILE in $C_FILES; do
     else
         "$ABSOLUTION" \
             --targets "$C_FILE" \
+            "${INVARIANT_ARGS[@]}" \
             --zon "$TMPDIR/${BASENAME}.zon" \
             --out "$TMPDIR/${BASENAME}.fuzzer.c" \
             --redef "$TMPDIR/${BASENAME}.redef.txt"

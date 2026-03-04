@@ -115,6 +115,10 @@ def test_absolution(c_file: Path, golden_zon: Path, tmp_path: Path):
                 target_args += ["--targets", rel(include_dir / tgt)]
     else:
         target_args = ["--targets", rel(c_file)]
+    
+    # -- invariant from .in sidecar --
+    invariant_file = c_file.with_name(c_file.name + ".in")
+    invariant_args = ["-i", rel(invariant_file)] if invariant_file.exists() else []
 
     out_zon = tmp_path / "out.zon"
     out_fuzzer = tmp_path / "fuzzer.c"
@@ -124,6 +128,7 @@ def test_absolution(c_file: Path, golden_zon: Path, tmp_path: Path):
     # 1. Run absolution
     subprocess.check_call(
         [str(ABSOLUTION)] + target_args
+        + invariant_args
         + ["--zon", str(out_zon), "--out", str(out_fuzzer), "--redef", str(out_redef)]
         + extra_flags,
         cwd=PROJECT_ROOT,
