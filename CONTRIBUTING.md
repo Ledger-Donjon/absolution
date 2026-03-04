@@ -8,19 +8,24 @@ This guide explains the code organization and development workflow for absolutio
 absolution/
 ├── src/
 │   ├── main.zig              # CLI entrypoint and argument parsing
-│   ├── root.zig              # Library exports (Parser, cgen, invariant)
-│   ├── Parser.zig            # C parsing via aro, global/field extraction
-│   ├── invariant.zig         # .zon invariant loading and application
+│   ├── root.zig              # Library exports (Parser, cgen, Invariant)
+│   ├── Parser.zig            # C parsing via aro, global extraction
+│   ├── Invariant.zig         # .zon invariant loading and application
+│   ├── type_flatten.zig      # Type flattening (structs, arrays, unions → field list)
+│   ├── include_paths.zig     # Include path discovery (zig cc compatibility)
+│   ├── cgen.zig              # Code generation orchestration
 │   └── cgen/
 │       ├── tree.zig          # Core data structures (Domain, Field, Global)
-│       ├── builder.zig       # File writing utilities
-│       └── emit.zig          # C code generation (sampler, checker, entrypoint)
+│       ├── builder.zig       # File writing utilities and type re-exports
+│       └── emit.zig          # C code emission (sampler, checker, entrypoint)
 ├── tests/                    # Integration test cases
 │   └── <test_name>/
 │       ├── <file>.c          # Test input
+│       ├── <file>.c.in       # Optional input invariant
 │       └── <file>.c.zon      # Golden output
 ├── scripts/
-│   └── integration.sh        # Shell-based integration test runner
+│   ├── integration.py        # pytest-based integration test runner
+│   └── gen-golden.sh         # Golden file generator
 └── build.zig                 # Build configuration
 ```
 
@@ -36,13 +41,27 @@ CLI interface using the [clap](https://github.com/Hejsil/zig-clap) library:
 ### `Parser.zig`
 
 Parses C translation units using [aro](https://github.com/Vexu/aro):
-- Configures include paths to match `zig cc` behavior
+- Initializes the aro toolchain and configures include paths (via `include_paths.zig`)
 - Extracts non-const global variables
-- Flattens nested structs into dot-path field names
-- Generates synthetic padding fields
-- Handles arrays, unions, bit-fields
+- Delegates type flattening to `type_flatten.zig`
+- Deduplicates non-static globals across translation units
 
-### `invariant.zig`
+### `type_flatten.zig`
+
+Flattens C types into a linear field list:
+- Peels top-level array dimensions from globals
+- Recursively flattens structs into dot-path field names
+- Generates synthetic padding fields from layout gaps
+- Handles arrays, unions, and bit-fields
+
+### `include_paths.zig`
+
+Discovers and configures include search paths to match `zig cc` behavior:
+- Adds target-specific, generic, and wildcard libc header directories
+- Uses the bundled sysroot under `<prefix>/lib/...`
+- Keeps absolution self-contained (no host system headers)
+
+### `Invariant.zig`
 
 Handles `.zon` invariant files:
 - Loads and parses invariant specifications
@@ -56,9 +75,16 @@ Core data structures:
 - `Field`: Flattened field with name, width, dimensions, domain
 - `Global`: Named global with dimensions and fields
 
+### `cgen.zig`
+
+Code generation orchestration:
+- Computes the total fuzzer input bytes needed for sampling
+- Delegates file emission to `cgen/emit.zig`
+
 ### `cgen/emit.zig`
 
-C code generation:
+C code emission:
+- `writeFuzzerC`: Writes includes, extern declarations, redef file, sampler, checker, and entrypoint
 - `emitSampler`: Generates `sample_invariant()` function
 - `emitChecker`: Generates `check_invariant()` function
 - `emitEntrypoint`: Generates `LLVMFuzzerTestOneInput()`
@@ -78,7 +104,7 @@ zig build run -- --help      # Build and run with args
 ```bash
 zig build test               # Unit tests (in-source)
 zig build test --summary all # Verbose unit test output
-bash scripts/integration.sh  # Integration tests
+uv run scripts/integration.py  # Integration tests (pytest)
 ```
 
 ### Adding a new test case
@@ -102,11 +128,11 @@ bash scripts/integration.sh  # Integration tests
    # Verify the output is correct
    ```
 
-4. Script should be automaticaly discovering the new tests
+4. The test runner automatically discovers new tests.
 
 5. Run to verify:
    ```bash
-   bash scripts/integration.sh
+   uv run scripts/integration.py
    ```
 
 ## Architecture Notes
@@ -118,7 +144,7 @@ C file → aro Preprocessor → aro Parser → AST traversal → ParsedGlobal[]
 ```
 
 - Uses aro's built-in preprocessor (self-contained, no external dependencies)
-- Configures include paths from bundled libc headers in `zig-out/lib/`
+- Configures include paths from bundled libc headers via `include_paths.zig`
 - System headers are automatically filtered via `Source.Kind` tracking
 
 ### Flattening

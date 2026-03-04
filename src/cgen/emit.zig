@@ -131,7 +131,8 @@ fn emitOffsetCalc(
     return try buf.toOwnedSlice(allocator);
 }
 
-/// Generate the C sampler, checker, and libFuzzer entrypoint.
+/// Generate the complete fuzzer C file and `objcopy` redefinition file.
+/// Writes includes, extern/weak declarations, sampler, checker, and libFuzzer entrypoint.
 pub fn writeFuzzerC(
     allocator: std.mem.Allocator,
     globals: []const Parser.Global,
@@ -211,10 +212,8 @@ pub fn writeFuzzerC(
     try emitEntrypoint(allocator, &file, entry_name);
 }
 
-/// Emit the sampler that hydrates globals from fuzzer input or domains.
-/// Args:
-///   module: Flattened module describing globals/fields.
-///   file: Output file handle for C emission.
+/// Emit `sample_invariant()` — reads fuzzer input bytes and hydrates globals
+/// according to their field domains (top, values, or pointers).
 fn emitSampler(allocator: std.mem.Allocator, globals: []const Parser.Global, file: *std.fs.File) !void {
     var num_buf: [64]u8 = undefined;
     var bytes_buf: [64]u8 = undefined;

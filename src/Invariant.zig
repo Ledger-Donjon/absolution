@@ -45,7 +45,7 @@ pub fn init(gpa: std.mem.Allocator, path: []const u8) !Invariant {
     return .{ .globals = globals, .arena = arena };
 }
 
-/// Caller must pass the same allocator used in `loadZon`.
+/// Release all memory owned by this invariant (the arena allocated in `init`).
 pub fn deinit(self: *Invariant) void {
     self.arena.deinit();
     self.* = undefined;

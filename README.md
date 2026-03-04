@@ -74,7 +74,7 @@ working example with multiple translation units.
 
 ```bash
 zig build test                # Run unit tests
-bash scripts/integration.sh   # In depth integration tests
+uv run scripts/integration.py # Integration tests (pytest)
 ```
 
 ## Documentation

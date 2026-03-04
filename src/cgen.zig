@@ -15,8 +15,8 @@ pub const Emit = emit;
 
 /// Generate a complete fuzzer from parsed globals.
 ///
-/// Applies any invariant constraints, emits `fuzzer.c` with sampling/checking
-/// functions, and optionally exports the module to `.zon` format.
+/// Emits `fuzzer.c` (sampling, checking, and libFuzzer entrypoint) and the
+/// `objcopy` symbol redefinition file for static globals.
 ///
 /// Returns the number of fuzzer input bytes needed for sampling.
 pub fn generateFuzzer(

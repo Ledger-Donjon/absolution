@@ -34,6 +34,7 @@ computed_sources: [4]aro.Source = undefined,
 /// Args:
 ///   gpa: General-purpose allocator used for long-lived buffers.
 ///   arena: Short-lived arena used by aro internals.
+///   cflags: C compiler flags forwarded to aro's driver (e.g. `-I`, `-D`, `-fshort-enums`).
 pub fn init(gpa: std.mem.Allocator, arena: std.mem.Allocator, cflags: []const []const u8) !Parser {
     // Initialize base fields in-place so self-references are valid from the start
     const diag = try gpa.create(aro.Diagnostics);
@@ -98,8 +99,8 @@ pub fn init(gpa: std.mem.Allocator, arena: std.mem.Allocator, cflags: []const []
     };
 }
 
-/// Process C compiler flags via arocc's Driver.
-/// Handles -I, -D, -f*, -std=, and other standard C compiler flags.
+/// Build a synthetic source containing user-defined macros from C compiler flags.
+/// Forwards -I, -D, -f*, -std=, and other flags to aro's Driver.
 fn buildUserMacros(toolchain: aro.Toolchain, cflags: []const []const u8, allocator: std.mem.Allocator) !aro.Source {
     if (cflags.len == 0) return toolchain.driver.comp.addSourceFromBuffer("<no cflags>", "\n");
     // Driver.parseArgs expects argv format where index 0 is the program name.
@@ -145,6 +146,7 @@ pub fn deinit(p: *Parser) void {
     p.* = undefined;
 }
 
+/// Free all globals and their owned fields, then deinit the list itself.
 pub fn freeGlobals(allocator: std.mem.Allocator, globals: *std.ArrayList(Global)) void {
     for (globals.items) |*g| g.deinit(allocator);
     globals.deinit(allocator);

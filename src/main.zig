@@ -1,3 +1,8 @@
+//! CLI entrypoint for absolution.
+//!
+//! Parses command-line arguments, orchestrates the parse → invariant → codegen
+//! pipeline, and optionally writes the `.zon` invariant and seed files.
+
 const builtin = @import("builtin");
 const std = @import("std");
 const clap = @import("clap");
