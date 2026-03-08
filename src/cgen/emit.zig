@@ -2,17 +2,6 @@ const std = @import("std");
 const Parser = @import("../Parser.zig");
 const Tree = @import("tree.zig");
 
-/// Check if a source file path is a header file.
-/// Header files don't produce object files, so static variables defined in
-/// headers can't be renamed via objcopy. We skip them entirely.
-pub fn isHeaderFile(path: []const u8) bool {
-    const extensions = [_][]const u8{ ".h", ".hpp", ".hxx", ".H", ".hh" };
-    for (extensions) |ext| {
-        if (std.mem.endsWith(u8, path, ext)) return true;
-    }
-    return false;
-}
-
 fn writeIndent(file: *std.fs.File, depth: usize) !void {
     for (0..depth) |_| try file.writeAll("    ");
 }
@@ -176,13 +165,6 @@ pub fn writeFuzzerC(
     if (func_symbols.len > 0) try file.writeAll("\n");
 
     for (globals) |g| {
-        // Skip static variables from header files - they don't produce object
-        // files, so objcopy can't rename them. Including them would cause
-        // undefined symbol errors at link time.
-        if (g.is_static and isHeaderFile(g.source_file)) {
-            continue;
-        }
-
         const mangled = if (g.is_static)
             try mangleName(allocator, g.source_file, g.name)
         else
@@ -226,11 +208,6 @@ fn emitSampler(allocator: std.mem.Allocator, globals: []const Parser.Global, fil
     try file.writeAll("    if (size < needed) return -1;\n");
 
     for (globals) |g| {
-        // Skip static variables from header files (same as extern decls)
-        if (g.is_static and isHeaderFile(g.source_file)) {
-            continue;
-        }
-
         const global_dims_len = g.dims.len;
 
         const mangled = if (g.is_static)
@@ -365,11 +342,6 @@ fn emitChecker(allocator: std.mem.Allocator, globals: []const Parser.Global, fil
     try file.writeAll("int check_invariant(void) {\n");
 
     for (globals) |g| {
-        // Skip static variables from header files (same as extern decls)
-        if (g.is_static and isHeaderFile(g.source_file)) {
-            continue;
-        }
-
         const global_dims_len = g.dims.len;
 
         const mangled = if (g.is_static)

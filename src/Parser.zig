@@ -228,6 +228,10 @@ fn collectGlobalsFromTree(comp: *aro.Compilation, tree: aro.Tree, gpa: std.mem.A
         if (variable.storage_class != .static) {
             const res = try seen.getOrPut(variable_name);
             if (res.found_existing) continue;
+        } else {
+            // Static variables in header files don't produce object files, so
+            // objcopy can't rename them. Skip them entirely.
+            if (isHeaderFile(expanded.path)) continue;
         }
 
         const size_val = variable.qt.sizeofOrNull(tree.comp) orelse continue;
@@ -253,6 +257,17 @@ fn collectGlobalsFromTree(comp: *aro.Compilation, tree: aro.Tree, gpa: std.mem.A
     }
 
     return globals;
+}
+
+/// Returns true if the source path is a header file.
+/// Static variables in headers don't get their own object file, so objcopy
+/// can't rename them; we exclude them when collecting globals.
+fn isHeaderFile(path: []const u8) bool {
+    const extensions = [_][]const u8{ ".h", ".hpp", ".hxx", ".H", ".hh" };
+    for (extensions) |ext| {
+        if (std.mem.endsWith(u8, path, ext)) return true;
+    }
+    return false;
 }
 
 /// Print accumulated aro diagnostics to stdout.

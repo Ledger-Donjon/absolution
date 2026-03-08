@@ -6,5 +6,6 @@
 //! - `Invariant`: Loads and applies `.zon` invariant specifications
 
 pub const Parser = @import("Parser.zig");
-pub const cgen = @import("cgen.zig");
+pub const seed = @import("seed.zig");
 pub const Invariant = @import("Invariant.zig");
+pub const emit = @import("cgen/emit.zig");

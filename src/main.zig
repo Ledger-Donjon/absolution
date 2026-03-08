@@ -9,26 +9,64 @@ const clap = @import("clap");
 const absolution = @import("absolution");
 const Invariant = absolution.Invariant;
 const Global = absolution.Parser.Global;
+const seed = absolution.seed;
+const emit = absolution.emit;
 
-fn writeSeed(path: []const u8, size: usize) !void {
-    var file = try std.fs.cwd().createFile(path, .{ .truncate = true });
-    defer file.close();
+pub fn main() !void {
+    // Allocators
+    var runtime_allocator = std.heap.GeneralPurposeAllocator(.{ .stack_trace_frames = 8 }){};
+    defer _ = runtime_allocator.deinit();
+    const gpa = runtime_allocator.allocator();
+    var arena: std.heap.ArenaAllocator = .init(gpa);
+    defer arena.deinit();
 
-    const chunk_size = 4096;
-    // we use undefine memory as the seed content does not matter
-    const chunk: [chunk_size]u8 = undefined;
+    // CLI
+    const opts = parseArgs(gpa) catch return;
+    defer gpa.free(opts.targets);
+    defer gpa.free(opts.cflags);
 
-    var remaining = size;
-    while (remaining > 0) {
-        const n = @min(remaining, chunk_size);
-        try file.writeAll(chunk[0..n]);
-        remaining -= n;
+    // Parser setup
+    var parser = try absolution.Parser.init(gpa, arena.allocator(), opts.cflags);
+    defer if (builtin.mode != .ReleaseFast) parser.deinit();
+
+    // Retrieve Globals from targets
+    var globals = try parser.collectGlobals(opts.targets);
+    defer if (builtin.mode != .ReleaseFast) absolution.Parser.freeGlobals(gpa, &globals);
+
+    // Optional: retrieve invariant and apply constraints
+    var func_symbols: []const []const u8 = &.{};
+    defer gpa.free(func_symbols);
+    if (opts.invariant_path) |inv_path| {
+        var inv = Invariant.init(gpa, inv_path) catch |err| {
+            switch (err) {
+                error.ParseZon => std.debug.print("Invalid format of input invariant\n", .{}),
+                else => {},
+            }
+            return err;
+        };
+        // tied to enclosing scope
+        defer if (builtin.mode != .ReleaseFast) inv.deinit();
+        const res = try inv.applyToGlobals(gpa, arena.allocator(), globals);
+        globals = res.globals;
+        func_symbols = res.func_symbols;
     }
+
+    // Compute needed bytes
+    const needed_bytes = seed.neededBytesFromGlobals(globals.items);
+
+    // Code generation
+    try emit.writeFuzzerC(gpa, globals.items, needed_bytes, opts.out_c, opts.redef, opts.entry, func_symbols);
+
+    // Optional: Save invariant to file
+    if (opts.zon) |zon_path| try writeInvariant(gpa, globals.items, zon_path);
+
+    // Optional: Generate an arbtrary seed
+    if (opts.seed) |seed_path| try seed.writeSeed(seed_path, needed_bytes);
 }
 
-fn writeInvariant(allocator: std.mem.Allocator, globals: std.ArrayList(Global), zon_path: []const u8) !void {
+fn writeInvariant(allocator: std.mem.Allocator, globals: []const Global, zon_path: []const u8) !void {
     var aw: std.Io.Writer.Allocating = .init(allocator);
-    try std.zon.stringify.serialize(globals.items, .{ .whitespace = true }, &aw.writer);
+    try std.zon.stringify.serialize(globals, .{ .whitespace = true }, &aw.writer);
     try aw.writer.writeByte('\n'); // Ensure trailing newline
     const zon_bytes = try aw.toOwnedSlice();
     defer allocator.free(zon_bytes);
@@ -104,53 +142,4 @@ fn parseArgs(allocator: std.mem.Allocator) !Options {
         .entry = res.args.entry orelse "AbsolutionTestOneInput",
         .cflags = cflags,
     };
-}
-
-pub fn main() !void {
-    // Allocators
-    var runtime_allocator = std.heap.GeneralPurposeAllocator(.{ .stack_trace_frames = 8 }){};
-    defer _ = runtime_allocator.deinit();
-    const gpa = runtime_allocator.allocator();
-    var arena: std.heap.ArenaAllocator = .init(gpa);
-    defer arena.deinit();
-
-    // CLI
-    const opts = parseArgs(gpa) catch return;
-    defer gpa.free(opts.targets);
-    defer gpa.free(opts.cflags);
-
-    // Parser setup
-    var parser = try absolution.Parser.init(gpa, arena.allocator(), opts.cflags);
-    defer if (builtin.mode != .ReleaseFast) parser.deinit();
-
-    // Retrieve Globals from targets
-    var globals = try parser.collectGlobals(opts.targets);
-    defer if (builtin.mode != .ReleaseFast) absolution.Parser.freeGlobals(gpa, &globals);
-
-    // Optional: retrieve invariant and apply constraints
-    var func_symbols: []const []const u8 = &.{};
-    defer gpa.free(func_symbols);
-    if (opts.invariant_path) |inv_path| {
-        var inv = Invariant.init(gpa, inv_path) catch |err| {
-            switch (err) {
-                error.ParseZon => std.debug.print("Invalid format of input invariant\n", .{}),
-                else => {},
-            }
-            return err;
-        };
-        // tied to enclosing scope
-        defer if (builtin.mode != .ReleaseFast) inv.deinit();
-        const res = try inv.applyToGlobals(gpa, arena.allocator(), globals);
-        globals = res.globals;
-        func_symbols = res.func_symbols;
-    }
-
-    // Code generation
-    const needed_bytes = try absolution.cgen.generateFuzzer(gpa, globals, opts.redef, opts.out_c, opts.entry, func_symbols);
-
-    // Optional: Save invariant to file
-    if (opts.zon) |zon_path| try writeInvariant(gpa, globals, zon_path);
-
-    // Optional: Generate an arbtrary seed
-    if (opts.seed) |seed_path| try writeSeed(seed_path, needed_bytes);
 }
