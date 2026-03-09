@@ -83,6 +83,3 @@ uv run scripts/integration.py # Integration tests (pytest)
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — Code organization and development workflow
 - **[example/protocol_parser/](example/protocol_parser/)** — Complete CMake integration example
 
-## Incoming features before 1.0.0
-- ~~Migrate invariant syntax from zon to rust PEG defined syntax~~
-- macOS support
