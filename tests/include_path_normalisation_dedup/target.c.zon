@@ -6,7 +6,6 @@
     .dims = .{},
     .fields = .{ .{
         .name = ".id",
-        .pad_container = null,
         .offset_bits = 0,
         .bit_width = 32,
         .dims = .{},
@@ -14,7 +13,6 @@
         .domain = .top,
     }, .{
         .name = ".value",
-        .pad_container = null,
         .offset_bits = 32,
         .bit_width = 32,
         .dims = .{},
@@ -30,7 +28,6 @@
     .fields = .{
         .{
             .name = ".state.id",
-            .pad_container = null,
             .offset_bits = 0,
             .bit_width = 32,
             .dims = .{},
@@ -39,7 +36,6 @@
         },
         .{
             .name = ".state.value",
-            .pad_container = null,
             .offset_bits = 32,
             .bit_width = 32,
             .dims = .{},
@@ -48,7 +44,6 @@
         },
         .{
             .name = ".flags",
-            .pad_container = null,
             .offset_bits = 64,
             .bit_width = 32,
             .dims = .{},

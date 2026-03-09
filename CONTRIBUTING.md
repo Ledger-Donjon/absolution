@@ -14,7 +14,6 @@ absolution/
 │   ├── type_flatten.zig      # Type flattening (structs, arrays, unions → field list)
 │   ├── include_paths.zig     # Include path discovery (zig cc compatibility)
 │   ├── seed.zig              # initial seed generation
-│   ├── cgen.zig              # Code generation orchestration
 │   └── cgen/
 │       ├── tree.zig          # Core data structures (Domain, Field, Global)
 │       ├── builder.zig       # File writing utilities and type re-exports

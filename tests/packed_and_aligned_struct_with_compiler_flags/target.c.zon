@@ -6,7 +6,6 @@
     .dims = .{.{ .len = 512, .stride_bytes = 66 }},
     .fields = .{.{
         .name = "._pad0",
-        .pad_container = ".",
         .offset_bits = 0,
         .bit_width = 528,
         .dims = .{},

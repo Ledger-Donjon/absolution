@@ -241,7 +241,6 @@ fn addPadding(
     errdefer allocator.free(container_copy);
     try fields.append(allocator, .{
         .name = name,
-        .pad_container = container_copy,
         .offset_bits = pad_offset_bits,
         .bit_width = bits,
         .dims = dims_copy,

@@ -7,7 +7,6 @@
     .fields = .{
         .{
             .name = ".apdu_state",
-            .pad_container = null,
             .offset_bits = 0,
             .bit_width = 8,
             .dims = .{},
@@ -16,7 +15,6 @@
         },
         .{
             .name = "._pad0",
-            .pad_container = ".",
             .offset_bits = 8,
             .bit_width = 8,
             .dims = .{},
@@ -25,7 +23,6 @@
         },
         .{
             .name = ".apdu_length",
-            .pad_container = null,
             .offset_bits = 16,
             .bit_width = 16,
             .dims = .{},
@@ -34,7 +31,6 @@
         },
         .{
             .name = ".io_flags",
-            .pad_container = null,
             .offset_bits = 32,
             .bit_width = 16,
             .dims = .{},
@@ -43,7 +39,6 @@
         },
         .{
             .name = ".apdu_media",
-            .pad_container = null,
             .offset_bits = 48,
             .bit_width = 8,
             .dims = .{},
@@ -52,7 +47,6 @@
         },
         .{
             .name = "._pad1",
-            .pad_container = ".",
             .offset_bits = 56,
             .bit_width = 8,
             .dims = .{},
