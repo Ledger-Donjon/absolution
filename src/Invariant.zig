@@ -17,6 +17,7 @@ arena: std.heap.ArenaAllocator,
 /// All returned memory is owned by the caller through `Invariant`.
 pub fn init(gpa: std.mem.Allocator, path: []const u8) !Invariant {
     var arena: std.heap.ArenaAllocator = .init(gpa);
+    errdefer arena.deinit();
     // zon will allocate an array and elements in depths
     // it is easier to destroy arena
     const zon_allocator = arena.allocator();
