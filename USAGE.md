@@ -1,6 +1,7 @@
 # Usage Guide
 
 This guide covers the full workflow for using absolution to fuzz C programs with invariant-constrained global state.
+It assumes absolution is already built (`zig build`) or installed; see [README.md](README.md) for requirements (Zig 0.15.2, C toolchain with libFuzzer, objcopy).
 
 ## Overview
 
@@ -16,17 +17,16 @@ Absolution generates a libFuzzer harness that:
 absolution [OPTIONS] [-- <cflags>...]
 
 OPTIONS:
-  -t, --targets <str>...   (required) C translation unit(s) with globals to sample.
+  -h, --help               Show this help and exit.
+  -t, --targets <str>...   (required) Path to target C translation unit(s).
+  -o, --out <str>          Output fuzzer C path (default: fuzzer.c).
   -r, --redef <str>        (required) Output path for symbol redefinition file.
-  -o, --out <str>          Output C path (default: fuzzer.c).
-  -s, --seed <str>         Seed file path (default: fuzzer.seed).
-  -e, --entry <str>        Harness function name (default: AbsolutionTestOneInput).
-  -z, --zon <str>          Export parsed module to .zon format.
-  -i, --invariant <str>    Apply .zon invariant before emission.
-  -h, --help               Show help and exit.
+  -i, --invariant <str>    Optional invariant file (.zon).
+  -z, --zon <str>          Optional: export parsed module to .zon format.
+  -s, --seed <str>         Optional seed file path (default: fuzzer.seed).
+  -e, --entry <str>        Optional harness function name (default: AbsolutionTestOneInput).
 
-POSITIONAL (after '--'):
-  C compiler flags passed directly to the parser (e.g. -I path -DFOO -fshort-enums).
+  <str>...                 C compiler flags after '--' (e.g. -I path -DFOO -fshort-enums).
 ```
 
 ## Workflow
@@ -36,28 +36,33 @@ POSITIONAL (after '--'):
 Your targets file contains the globals you want to fuzz:
 ```c
 // targets.h
-typedef struct {
-    int value;
-    char flags;
-} Config;
+typedef int (*handler_fn)(int);
 
-void process_config(void);
+// Function pointer table (handlers receive input_value)
+extern handler_fn handlers[4];
+
+int handle_a(int n);
+int handle_b(int n);
+int handle_c(int n);
+int handle_d(int n);
 ```
 
 
 ```c
-#include targets.h
 // targets.c
+#include "targets.h"
 
 
-// Because it is not `const` it will be collected by absolution
-Config config;
+// Global state: value passed to all handlers
+int input_value;
 
-void process_config(void) {
-    if (config.value < 0 && config.flags & 0x01) {
-        // Potential bug: negative value with flag set
-    }
-}
+// Function pointer table (handlers receive input_value)
+handler_fn handlers[4];
+
+int handle_a(int n) { return n + 1; }
+int handle_b(int n) { return n * 2; }
+int handle_c(int n) { return n - 1; }
+int handle_d(int n) { return -1; }
 ```
 
 ### Step 2: Create your harness
@@ -72,7 +77,10 @@ expects `AbsolutionTestOneInput`, but you can choose any name with `--entry`:
 int MyTestOneInput(const uint8_t *data, size_t size) {
     // For this test we only rely on absolution behavior
     // but you can use data and size to fuzz parameters
-    process_config();
+    for (int i = 0; i < 4; i++) {
+        if (handlers[i] != 0)
+            handlers[i](input_value);
+    }
     return 0;
 }
 ```
@@ -104,17 +112,21 @@ absolution \
 
 ### Step 4: Apply symbol redefinitions and build
 
-When targets contain `static` globals, absolution generates a `.redef` file
-with symbol renames. Apply them with `objcopy` before linking:
+When targets contain `static` globals, absolution generates a `.redef` file.
+Each line has three space-separated fields: **source_path**, **old_symbol**, **new_symbol**.
+You must map each source path to the corresponding object file (e.g. `targets.c` → `targets.o`).
+Apply redefinitions with `objcopy` before linking:
 
 ```bash
 # Compile targets
 clang -g -c targets.c -o targets.o
 
 # Apply redefinitions (if any static globals)
-while read -r file old new; do
-  objcopy --redefine-sym ${old}=${new} ${file}.o
-  objcopy --globalize-symbol ${new} ${file}.o
+# Each redef line: source_path old_symbol new_symbol
+while read -r src_path old_sym new_sym; do
+  obj="${src_path%.c}.o"   # map source path to your object file
+  objcopy --redefine-sym "${old_sym}=${new_sym}" "${obj}"
+  objcopy --globalize-symbol "${new_sym}" "${obj}"
 done < fuzzer.redef
 
 # Link and run
@@ -128,7 +140,8 @@ See the [example/protocol_parser/](example/protocol_parser/) directory.
 
 ## Invariant Language
 
-Invariants constrain the domains of global fields. They're written in Zig's `.zon` format.
+Invariants constrain the domains of global fields. They are written in Zig's `.zon` format.
+The `--invariant` option accepts a path to a `.zon` file produced by `--zon` and optionally edited.
 
 ### Structure
 
@@ -145,11 +158,9 @@ fields:
     .fields = .{
         .{
             .name = ".field_path",
-            .pad_container = null,  // non-null for padding fields
             .offset_bits = 0,
             .bit_width = 32,
             .dims = .{},
-            .dim_positions = .{},
             .is_padding = false,
             .domain = .top,
         },
@@ -169,35 +180,48 @@ fields:
 ### Example
 
 ```zig
-.{.{
-    .name = "config",
-    .source_file = "config.c",
-    .size_bytes = 8,
+.{ .{
+    .name = "input_value",
+    .source_file = "tests/function_pointers_with_invariant_constraint/target.c",
+    .size_bytes = 4,
     .is_static = false,
     .dims = .{},
     .fields = .{
         .{
-            .name = ".value",
-            .pad_container = null,
+            .name = ".",
             .offset_bits = 0,
             .bit_width = 32,
             .dims = .{},
-            .dim_positions = .{},
             .is_padding = false,
-            .domain = .top,         // Full 4 bytes from fuzzer
-        },
-        .{
-            .name = ".flags",
-            .pad_container = null,
-            .offset_bits = 32,
-            .bit_width = 8,
-            .dims = .{},
-            .dim_positions = .{},
-            .is_padding = false,
-            .domain = .{ .values = .{ "0x00", "0x01", "0x03" } },  // Only these values
+            .domain = .{ .values = .{
+                "\x00",
+                "\x01",
+                "\x64",
+            } },
         },
     },
-}}
+}, .{
+    .name = "handlers",
+    .source_file = "tests/function_pointers_with_invariant_constraint/target.c",
+    .size_bytes = 32,
+    .is_static = false,
+    .dims = .{.{ .len = 4, .stride_bytes = 8 }},
+    .fields = .{
+        .{
+            .name = ".",
+            .offset_bits = 0,
+            .bit_width = 64,
+            .dims = .{.{ .len = 4, .stride_bytes = 8 }},
+            .is_padding = false,
+            .domain = .{ .pointers = .{
+                "handle_a",
+                "handle_b",
+                "handle_c",
+                "handle_d",
+            } },
+        },
+    },
+} }
 ```
 
 ### Field naming conventions
@@ -226,11 +250,9 @@ Example for `Config configs[10]` with `int values[5]` (struct size 8 bytes):
     .fields = .{
         .{
             .name = ".values",
-            .pad_container = null,
             .offset_bits = 0,
             .bit_width = 32,
             .dims = .{.{ .len = 5, .stride_bytes = 4 }},
-            .dim_positions = .{},
             .is_padding = false,
             .domain = .top,
         },
@@ -244,8 +266,8 @@ The generated `fuzzer.c` contains:
 
 ### `sample_invariant(data, size)`
 
-Hydrates globals from fuzzer input:
-- Returns number of bytes consumed (for remaining harness data)
+Hydrates globals from fuzzer input (signature: `ptrdiff_t sample_invariant(const uint8_t *data, size_t size)`):
+- Returns the number of bytes consumed (for the remaining harness data)
 - Returns `-1` if input is too short
 - Zeros all storage before sampling (for padding)
 

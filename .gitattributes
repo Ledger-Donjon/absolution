@@ -1,0 +1,3 @@
+/tests/** -linguist-detectable
+/example/** -linguist-detectable
+/scripts/** -linguist-detectable
