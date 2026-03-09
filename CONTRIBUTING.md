@@ -75,12 +75,6 @@ Core data structures:
 - `Field`: Flattened field with name, width, dimensions, domain
 - `Global`: Named global with dimensions and fields
 
-### `cgen.zig`
-
-Code generation orchestration:
-- Computes the total fuzzer input bytes needed for sampling
-- Delegates file emission to `cgen/emit.zig`
-
 ### `cgen/emit.zig`
 
 C code emission:

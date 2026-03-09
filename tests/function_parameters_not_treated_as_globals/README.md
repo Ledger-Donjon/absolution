@@ -37,7 +37,7 @@ Legitimate file-scope variables (like `mytype astruct;`) have `type = .typedef`
 or other user-defined types, allowing us to distinguish them.
 
 ## Fix
-`src/Parser.zig` - In `collect_globals`, filter variables that have ALL of:
+`src/Parser.zig` - In `collectGlobals`, filter variables that have ALL of:
 - `storage_class == .auto` (invalid at file scope in C)
 - `initializer == null`
 - `definition == null`
@@ -50,7 +50,7 @@ or other user-defined types, allowing us to distinguish them.
 - Golden file expects only `real_global` in the output
 
 ## Related Files
-- `src/Parser.zig` - The fix location (collect_globals function, ~line 198)
+- `src/Parser.zig` - The fix location (collectGlobals function, ~line 198)
 - `tests/manual/conflict/absolution.c` - Original file that triggered this bug
 - `tests/basic/basic.c` - Tests legitimate typedef variables still work
 

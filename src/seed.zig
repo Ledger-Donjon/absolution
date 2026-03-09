@@ -1,6 +1,6 @@
-//! Seed generation for libFuzzer harnesses execution.
+//! Seed generation for libFuzzer harness execution.
 //!
-//! This module implements the behavior when specifying the seed paramter.
+//! This module implements the behavior when specifying the seed parameter.
 const std = @import("std");
 const tree = @import("cgen/tree.zig");
 

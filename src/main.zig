@@ -60,7 +60,7 @@ pub fn main() !void {
     // Optional: Save invariant to file
     if (opts.zon) |zon_path| try writeInvariant(gpa, globals.items, zon_path);
 
-    // Optional: Generate an arbtrary seed
+    // Optional: Generate an arbitrary seed
     if (opts.seed) |seed_path| try seed.writeSeed(seed_path, needed_bytes);
 }
 
