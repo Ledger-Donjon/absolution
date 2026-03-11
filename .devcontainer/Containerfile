@@ -1,6 +1,6 @@
 FROM registry.opensuse.org/opensuse/tumbleweed:latest
 
-RUN zypper in --no-recommends -y binutils busybox-netcat findutils gawk git lldb rizin &&\
+RUN zypper in --no-recommends -y binutils busybox-netcat cmake findutils gawk git lldb ninja rizin &&\
     zypper clean --all &&\
     useradd code
 
