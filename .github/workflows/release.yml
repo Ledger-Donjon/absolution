@@ -32,14 +32,9 @@ jobs:
           sparse-checkout: .github/actions
           path: _actions
       - uses: ./_actions/.github/actions/setup-zig
-      - run: zig build -Doptimize=${{ matrix.optimize }}
-      - name: Create release tarball
-        run: |
-          _os="${{ matrix.os == 'ubuntu-latest' && 'linux' || 'macos' }}"
-          _name="absolution-${RELEASE_TAG}-${_os}-${{ matrix.optimize }}"
-          tar czf "${_name}.tar.gz" -C zig-out . 2>/dev/null
+      - run: zig build -Doptimize=${{ matrix.optimize }} -Dstrip=true
       - name: Upload tarball
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f #v7.0.0
         with:
           name: release-${{ matrix.os }}-${{ matrix.optimize }}
-          path: "absolution-${{ inputs.release_tag }}-${{ matrix.os == 'ubuntu-latest' && 'linux' || 'macos' }}-${{ matrix.optimize }}.tar.gz"
+          path: zig-out/*

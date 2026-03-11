@@ -3,6 +3,7 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const strip = b.option(bool, "strip", "Strip debug info from the binary");
 
     const aro_dep = b.dependency("aro", .{
         .target = target,
@@ -25,6 +26,7 @@ pub fn build(b: *std.Build) void {
     const exe = b.addExecutable(.{
         .name = "absolution",
         .root_module = b.createModule(.{
+            .strip = strip,
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
