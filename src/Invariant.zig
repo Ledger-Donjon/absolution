@@ -78,8 +78,9 @@ pub fn applyToGlobals(
     try symbols.ensureTotalCapacity(@intCast(globals.items.len));
 
     for (globals.items) |*g| {
-        try global_map.putNoClobber(g.name, g);
-        try symbols.putNoClobber(g.name, {});
+        const key = try uniqueKey(arena, g.name, g.source_file, g.is_static);
+        try global_map.putNoClobber(key, g);
+        try symbols.put(g.name, {});
     }
 
     var func_syms: std.StringHashMap(void) = .init(gpa);
@@ -87,7 +88,8 @@ pub fn applyToGlobals(
 
     // Apply invariant globals
     for (self.globals) |g| {
-        const target = global_map.get(g.name) orelse continue;
+        const key = try uniqueKey(arena, g.name, g.source_file, g.is_static);
+        const target = global_map.get(key) orelse continue;
 
         var field_map: std.StringHashMap(*Parser.Field) = .init(gpa);
         defer field_map.deinit();
@@ -120,6 +122,15 @@ pub fn applyToGlobals(
         result[i] = key.*;
     }
     return .{ .globals = globals, .func_symbols = result };
+}
+
+/// Produce a map key that disambiguates static globals (same name, different
+/// translation units) from non-static ones. Static globals include the
+/// source path so that e.g. `file1.c:var` and `file2.c:var` get distinct keys.
+fn uniqueKey(alloc: std.mem.Allocator, name: []const u8, source_file: []const u8, is_static: bool) ![]const u8 {
+    if (is_static)
+        return std.fmt.allocPrint(alloc, "{s}\x00{s}", .{ source_file, name });
+    return name;
 }
 
 test "applyToGlobals updates domains" {
