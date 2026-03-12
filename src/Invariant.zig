@@ -137,7 +137,7 @@ test "applyToGlobals updates domains" {
     const allocator = std.testing.allocator;
 
     var globals = std.ArrayList(Parser.Global).empty;
-    defer Parser.free_globals(allocator, &globals);
+    defer Parser.freeGlobals(allocator, &globals);
 
     const global_fields = try allocator.alloc(Parser.Field, 1);
     global_fields[0] = .{
@@ -145,33 +145,95 @@ test "applyToGlobals updates domains" {
         .bit_width = 8,
         .is_padding = false,
         .domain = .top,
-        .domain_owned = false,
     };
 
     try globals.append(allocator, .{
         .name = try allocator.dupe(u8, "g"),
+        .source_file = try allocator.dupe(u8, ""),
+        .size_bytes = 1,
+        .is_static = false,
+        .dims = &.{},
         .fields = global_fields,
     });
 
-    const inv_fields = try allocator.alloc(tree.Field, 1);
+    var inv_arena = std.heap.ArenaAllocator.init(allocator);
+    const inv_alloc = inv_arena.allocator();
+    const inv_fields = try inv_alloc.alloc(tree.Field, 1);
     inv_fields[0] = .{
-        .name = try allocator.dupe(u8, "."),
+        .name = try inv_alloc.dupe(u8, "."),
         .bit_width = 8,
         .domain = .{ .values = &.{"0xAA"} },
         .is_padding = false,
     };
-
-    var inv = Invariant{
-        .globals = try allocator.alloc(tree.Global, 1),
-    };
-    defer inv.deinit(allocator);
-    inv.globals[0] = .{
-        .name = try allocator.dupe(u8, "g"),
+    const inv_globals = try inv_alloc.alloc(tree.Global, 1);
+    inv_globals[0] = .{
+        .name = try inv_alloc.dupe(u8, "g"),
+        .source_file = try inv_alloc.dupe(u8, ""),
+        .size_bytes = 1,
+        .is_static = false,
+        .dims = &.{},
         .fields = inv_fields,
     };
+    var inv = Invariant{ .globals = inv_globals, .arena = inv_arena };
+    defer inv.deinit();
 
-    const result = try applyToGlobals(allocator, &globals, &inv);
+    var apply_arena = std.heap.ArenaAllocator.init(allocator);
+    defer apply_arena.deinit();
+    const result = try inv.applyToGlobals(allocator, apply_arena.allocator(), globals);
     defer allocator.free(result.func_symbols);
     try std.testing.expect(globals.items[0].fields[0].domain == .values);
     try std.testing.expectEqual(@as(usize, 0), result.func_symbols.len);
+}
+
+test "applyToGlobals handles static globals with same name from different files" {
+    const allocator = std.testing.allocator;
+    var globals = std.ArrayList(Parser.Global).empty;
+    defer Parser.freeGlobals(allocator, &globals);
+    // Two static globals both named "var" from different source files.
+    for ([_][]const u8{ "file1.c", "file2.c" }) |src| {
+        const fields = try allocator.alloc(Parser.Field, 1);
+        fields[0] = .{
+            .name = try allocator.dupe(u8, "."),
+            .bit_width = 32,
+            .is_padding = false,
+            .domain = .top,
+        };
+        try globals.append(allocator, .{
+            .name = try allocator.dupe(u8, "var"),
+            .source_file = try allocator.dupe(u8, src),
+            .size_bytes = 4,
+            .is_static = true,
+            .dims = &.{},
+            .fields = fields,
+        });
+    }
+    // Invariant targets only the first file's "var".
+    var inv_arena: std.heap.ArenaAllocator = .init(allocator);
+    defer inv_arena.deinit();
+    const inv_alloc = inv_arena.allocator();
+    const inv_fields = try inv_alloc.alloc(tree.Field, 1);
+    inv_fields[0] = .{
+        .name = try inv_alloc.dupe(u8, "."),
+        .bit_width = 32,
+        .domain = .{ .values = &.{"0xAA"} },
+        .is_padding = false,
+    };
+    const inv_globals = try inv_alloc.alloc(tree.Global, 1);
+    inv_globals[0] = .{
+        .name = try inv_alloc.dupe(u8, "var"),
+        .source_file = try inv_alloc.dupe(u8, "file1.c"),
+        .size_bytes = 4,
+        .is_static = true,
+        .dims = &.{},
+        .fields = inv_fields,
+    };
+    const inv = Invariant{ .globals = inv_globals, .arena = inv_arena };
+    var apply_arena: std.heap.ArenaAllocator = .init(allocator);
+    defer apply_arena.deinit();
+    const result = try inv.applyToGlobals(allocator, apply_arena.allocator(), globals);
+    defer allocator.free(result.func_symbols);
+    // file1.c's "var" should have its domain updated.
+    try std.testing.expect(globals.items[0].fields[0].domain == .values);
+    // file2.c's "var" should remain unconstrained.
+    try std.testing.expect(globals.items[1].fields[0].domain == .top);
 }

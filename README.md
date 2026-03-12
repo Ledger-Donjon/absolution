@@ -21,7 +21,7 @@ Absolution lets you specify an invariant for a program’s global state and fuzz
 
 ```bash
 # Build absolution
-zig build
+zig build -Doptimize=ReleaseFast
 
 # Show CLI help
 ./zig-out/bin/absolution -h
