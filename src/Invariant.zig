@@ -86,14 +86,14 @@ pub fn applyToGlobals(
     var func_syms: std.StringHashMap(void) = .init(gpa);
     defer func_syms.deinit();
 
+    var field_map: std.StringHashMap(*Parser.Field) = .init(gpa);
+    defer field_map.deinit();
     // Apply invariant globals
     for (self.globals) |g| {
         const key = try uniqueKey(arena, g.name, g.source_file, g.is_static);
         const target = global_map.get(key) orelse continue;
 
-        var field_map: std.StringHashMap(*Parser.Field) = .init(gpa);
-        defer field_map.deinit();
-
+        field_map.clearRetainingCapacity();
         try field_map.ensureTotalCapacity(@intCast(target.fields.len));
 
         for (target.fields) |*mf| {
