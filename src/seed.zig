@@ -2,9 +2,9 @@
 //!
 //! This module implements the behavior when specifying the seed parameter.
 const std = @import("std");
-const tree = @import("cgen/tree.zig");
+const ir = @import("cgen/ir.zig");
 
-pub fn neededBytesFromGlobals(globals: []const tree.Global) usize {
+pub fn neededBytesFromGlobals(globals: []const ir.Global) usize {
     var total: usize = 0;
     for (globals) |g| {
         const global_mult = dimsProduct(g.dims);
@@ -21,7 +21,7 @@ pub fn neededBytesFromGlobals(globals: []const tree.Global) usize {
     return total;
 }
 
-fn dimsProduct(dims: []const tree.Dimension) usize {
+fn dimsProduct(dims: []const ir.Dimension) usize {
     var prod: usize = 1;
     for (dims) |d| prod *= d.len;
     return prod;

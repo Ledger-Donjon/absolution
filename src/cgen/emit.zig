@@ -1,6 +1,6 @@
 const std = @import("std");
 const Parser = @import("../Parser.zig");
-const Tree = @import("tree.zig");
+const ir = @import("ir.zig");
 
 fn writeIndent(file: *std.fs.File, depth: usize) !void {
     for (0..depth) |_| try file.writeAll("    ");
@@ -50,7 +50,7 @@ const LoopStack = struct {
     }
 
     /// Open a loop for a dimension.
-    fn openLoop(self: *LoopStack, dim: Tree.Dimension, index: usize) !void {
+    fn openLoop(self: *LoopStack, dim: ir.Dimension, index: usize) !void {
         try writeIndent(self.file, self.current_depth);
         var buf: [128]u8 = undefined;
         const line = try std.fmt.bufPrint(
@@ -93,8 +93,8 @@ fn mangleName(allocator: std.mem.Allocator, path: []const u8, symbol: []const u8
 /// Generate offset calculation string: "base + i0*s0 + i1*s1 + ..."
 fn emitOffsetCalc(
     allocator: std.mem.Allocator,
-    global_dims: []const Tree.Dimension,
-    field_dims: []const Tree.Dimension,
+    global_dims: []const ir.Dimension,
+    field_dims: []const ir.Dimension,
     base_offset: u64,
 ) ![]const u8 {
     var buf = std.ArrayList(u8).empty;

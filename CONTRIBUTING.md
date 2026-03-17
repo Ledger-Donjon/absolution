@@ -15,7 +15,7 @@ absolution/
 │   ├── include_paths.zig     # Include path discovery (zig cc compatibility)
 │   ├── seed.zig              # initial seed generation
 │   └── cgen/
-│       ├── tree.zig          # Core data structures (Domain, Field, Global)
+│       ├── ir.zig          # Core data structures (Domain, Field, Global)
 │       ├── builder.zig       # File writing utilities and type re-exports
 │       └── emit.zig          # C code emission (sampler, checker, entrypoint)
 ├── tests/                    # Integration test cases
@@ -68,7 +68,7 @@ Handles `.zon` invariant files:
 - Validates pointer domain targets
 - Applies domain constraints to parsed globals
 
-### `cgen/tree.zig`
+### `cgen/ir.zig`
 
 Core data structures:
 - `Domain`: `.top`, `.values`, `.pointers`

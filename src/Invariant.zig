@@ -4,13 +4,13 @@
 //! fuzzer's sampling to meaningful states.
 
 const std = @import("std");
-const tree = @import("cgen/tree.zig");
+const ir = @import("cgen/ir.zig");
 const Parser = @import("Parser.zig");
 
 /// Parsed invariant specification containing domain constraints for globals.
 /// Owns all memory in `globals`.
 const Invariant = @This();
-globals: []tree.Global,
+globals: []ir.Global,
 arena: std.heap.ArenaAllocator,
 
 /// Load an invariant from a `.zon` file.
@@ -36,7 +36,7 @@ pub fn init(gpa: std.mem.Allocator, path: []const u8) !Invariant {
     defer diag.deinit(zon_allocator);
 
     const globals = try std.zon.parse.fromSlice(
-        []tree.Global,
+        []ir.Global,
         zon_allocator,
         bytes,
         &diag,
@@ -158,14 +158,14 @@ test "applyToGlobals updates domains" {
 
     var inv_arena = std.heap.ArenaAllocator.init(allocator);
     const inv_alloc = inv_arena.allocator();
-    const inv_fields = try inv_alloc.alloc(tree.Field, 1);
+    const inv_fields = try inv_alloc.alloc(ir.Field, 1);
     inv_fields[0] = .{
         .name = try inv_alloc.dupe(u8, "."),
         .bit_width = 8,
         .domain = .{ .values = &.{"0xAA"} },
         .is_padding = false,
     };
-    const inv_globals = try inv_alloc.alloc(tree.Global, 1);
+    const inv_globals = try inv_alloc.alloc(ir.Global, 1);
     inv_globals[0] = .{
         .name = try inv_alloc.dupe(u8, "g"),
         .source_file = try inv_alloc.dupe(u8, ""),
@@ -211,14 +211,14 @@ test "applyToGlobals handles static globals with same name from different files"
     var inv_arena: std.heap.ArenaAllocator = .init(allocator);
     defer inv_arena.deinit();
     const inv_alloc = inv_arena.allocator();
-    const inv_fields = try inv_alloc.alloc(tree.Field, 1);
+    const inv_fields = try inv_alloc.alloc(ir.Field, 1);
     inv_fields[0] = .{
         .name = try inv_alloc.dupe(u8, "."),
         .bit_width = 32,
         .domain = .{ .values = &.{"0xAA"} },
         .is_padding = false,
     };
-    const inv_globals = try inv_alloc.alloc(tree.Global, 1);
+    const inv_globals = try inv_alloc.alloc(ir.Global, 1);
     inv_globals[0] = .{
         .name = try inv_alloc.dupe(u8, "var"),
         .source_file = try inv_alloc.dupe(u8, "file1.c"),

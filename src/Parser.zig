@@ -6,13 +6,13 @@
 
 const aro = @import("aro");
 const std = @import("std");
-const cgen_tree = @import("cgen/tree.zig");
+const ir = @import("cgen/ir.zig");
 const include_paths = @import("include_paths.zig");
 const type_flatten = @import("type_flatten.zig");
 
-pub const Domain = cgen_tree.Domain;
-pub const Field = cgen_tree.Field;
-pub const Global = cgen_tree.Global;
+pub const Domain = ir.Domain;
+pub const Field = ir.Field;
+pub const Global = ir.Global;
 
 const ParseError = std.mem.Allocator.Error;
 const FieldsBuilder = std.ArrayListUnmanaged(Field);

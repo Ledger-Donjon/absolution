@@ -5,15 +5,14 @@
 
 const aro = @import("aro");
 const std = @import("std");
-const cgen_tree = @import("cgen/tree.zig");
+const ir = @import("cgen/ir.zig");
 
-pub const Domain = cgen_tree.Domain;
-pub const ParsedField = cgen_tree.Field;
+pub const Domain = ir.Domain;
 
 const ParseError = std.mem.Allocator.Error;
-const Dimensions = std.ArrayListUnmanaged(cgen_tree.Dimension);
+const Dimensions = std.ArrayListUnmanaged(ir.Dimension);
 const DimPositions = std.ArrayListUnmanaged(usize);
-const Fields = std.ArrayListUnmanaged(ParsedField);
+const Fields = std.ArrayListUnmanaged(ir.Field);
 
 const root_prefix = ".";
 
@@ -33,8 +32,8 @@ const DimStack = struct {
         _ = self.dims.pop();
     }
 
-    fn cloneDims(self: DimStack, allocator: std.mem.Allocator) ![]const cgen_tree.Dimension {
-        return try allocator.dupe(cgen_tree.Dimension, self.dims.items);
+    fn cloneDims(self: DimStack, allocator: std.mem.Allocator) ![]const ir.Dimension {
+        return try allocator.dupe(ir.Dimension, self.dims.items);
     }
 };
 
@@ -43,7 +42,7 @@ pub fn peelTopLevelArrayDims(
     allocator: std.mem.Allocator,
     tree: aro.Tree,
     qt: aro.QualType,
-) ParseError!struct { qt: aro.QualType, dims: []const cgen_tree.Dimension } {
+) ParseError!struct { qt: aro.QualType, dims: []const ir.Dimension } {
     var dims_list = Dimensions{};
     errdefer dims_list.deinit(allocator);
     var current = qt;
@@ -153,7 +152,7 @@ pub fn flattenType(
     });
 }
 
-/// Flatten record fields into ParsedField entries, adding padding as needed.
+/// Flatten record fields into ir.Field entries, adding padding as needed.
 fn flattenRecord(
     allocator: std.mem.Allocator,
     tree: aro.Tree,

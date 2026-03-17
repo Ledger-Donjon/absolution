@@ -266,7 +266,7 @@ The generated `fuzzer.c` contains:
 
 ### `sample_invariant(data, size)`
 
-Hydrates globals from fuzzer input (signature: `ptrdiff_t sample_invariant(const uint8_t *data, size_t size)`):
+Instantiate globals from fuzzer input (signature: `ptrdiff_t sample_invariant(const uint8_t *data, size_t size)`):
 - Returns the number of bytes consumed (for the remaining harness data)
 - Returns `-1` if input is too short
 - Zeros all storage before sampling (for padding)
