@@ -20,29 +20,21 @@ const root_prefix = ".";
 /// Tracks array dimensions along with their positions in the field path.
 const DimStack = struct {
     dims: Dimensions = .{},
-    positions: DimPositions = .{},
 
     fn deinit(self: *DimStack, allocator: std.mem.Allocator) void {
         self.dims.deinit(allocator);
-        self.positions.deinit(allocator);
     }
 
-    fn append(self: *DimStack, allocator: std.mem.Allocator, len: usize, stride: u64, position: usize) !void {
+    fn append(self: *DimStack, allocator: std.mem.Allocator, len: usize, stride: u64) !void {
         try self.dims.append(allocator, .{ .len = len, .stride_bytes = stride });
-        try self.positions.append(allocator, position);
     }
 
     fn pop(self: *DimStack) void {
         _ = self.dims.pop();
-        _ = self.positions.pop();
     }
 
     fn cloneDims(self: DimStack, allocator: std.mem.Allocator) ![]const cgen_tree.Dimension {
         return try allocator.dupe(cgen_tree.Dimension, self.dims.items);
-    }
-
-    fn clonePositions(self: DimStack, allocator: std.mem.Allocator) ![]const usize {
-        return try allocator.dupe(usize, self.positions.items);
     }
 };
 
@@ -104,7 +96,7 @@ pub fn flattenType(
                 // Record the dimension along with the current prefix length.
                 // This tells us where in the final path to insert the array index.
                 const elem_size = arr.elem.sizeofOrNull(tree.comp) orelse 1;
-                try dim_stack.append(allocator, @intCast(len), elem_size, prefix.len);
+                try dim_stack.append(allocator, @intCast(len), elem_size);
                 defer dim_stack.pop();
                 try flattenType(allocator, tree, arr.elem, prefix, dim_stack, fields, pad_index, offset_bits);
                 return;
@@ -147,9 +139,6 @@ pub fn flattenType(
 
     const dims_info = try dim_stack.cloneDims(allocator);
     errdefer allocator.free(dims_info);
-
-    const positions_info = try dim_stack.clonePositions(allocator);
-    errdefer allocator.free(positions_info);
 
     const name_copy = try allocator.dupe(u8, prefix);
     errdefer allocator.free(name_copy);
@@ -237,8 +226,6 @@ fn addPadding(
     pad_index.* += 1;
     const dims_copy = try dim_stack.cloneDims(allocator);
     errdefer allocator.free(dims_copy);
-    const container_copy = try allocator.dupe(u8, prefix);
-    errdefer allocator.free(container_copy);
     try fields.append(allocator, .{
         .name = name,
         .offset_bits = pad_offset_bits,
