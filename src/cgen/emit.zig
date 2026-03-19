@@ -547,3 +547,621 @@ fn emitEntrypoint(allocator: std.mem.Allocator, file: *std.fs.File, entry_name: 
         \\}
     );
 }
+
+fn readTmpFile(tmp: *std.testing.TmpDir, name: []const u8, buf: []u8) ![]const u8 {
+    var f = try tmp.dir.openFile(name, .{});
+    defer f.close();
+    const n = try f.readAll(buf);
+    return buf[0..n];
+}
+
+fn createTmpFile(tmp: *std.testing.TmpDir, name: []const u8) !std.fs.File {
+    return try tmp.dir.createFile(name, .{ .read = true });
+}
+
+// ---------------------------------------------------------------------------
+// Pure-helper tests
+// ---------------------------------------------------------------------------
+
+test "mangleName sanitizes path and joins with symbol" {
+    const alloc = std.testing.allocator;
+    const result = try mangleName(alloc, "foo/bar.c", "var");
+    defer alloc.free(result);
+    try std.testing.expectEqualStrings("foo_bar_c_var", result);
+}
+
+test "mangleName handles empty path" {
+    const alloc = std.testing.allocator;
+    const result = try mangleName(alloc, "", "sym");
+    defer alloc.free(result);
+    try std.testing.expectEqualStrings("_sym", result);
+}
+
+test "emitOffsetCalc base offset only" {
+    const alloc = std.testing.allocator;
+    const result = try emitOffsetCalc(alloc, &.{}, &.{}, 42);
+    defer alloc.free(result);
+    try std.testing.expectEqualStrings("42", result);
+}
+
+test "emitOffsetCalc with global and field dims" {
+    const alloc = std.testing.allocator;
+    const gdims: []const ir.Dimension = &.{.{ .len = 3, .stride_bytes = 8 }};
+    const fdims: []const ir.Dimension = &.{.{ .len = 4, .stride_bytes = 2 }};
+    const result = try emitOffsetCalc(alloc, gdims, fdims, 10);
+    defer alloc.free(result);
+    try std.testing.expectEqualStrings("10 + i0 * 8 + i1 * 2", result);
+}
+
+test "emitOffsetCalc skips zero-stride dims" {
+    const alloc = std.testing.allocator;
+    const gdims: []const ir.Dimension = &.{.{ .len = 3, .stride_bytes = 0 }};
+    const result = try emitOffsetCalc(alloc, gdims, &.{}, 5);
+    defer alloc.free(result);
+    try std.testing.expectEqualStrings("5", result);
+}
+
+test "writeIndent outputs correct spaces" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var file = try createTmpFile(&tmp, "t.c");
+    defer file.close();
+    try writeIndent(&file, 2);
+    try file.writeAll("x");
+    var buf: [64]u8 = undefined;
+    const out = try readTmpFile(&tmp, "t.c", &buf);
+    try std.testing.expectEqualStrings("        x", out);
+}
+
+test "emitMemset generates correct output" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var file = try createTmpFile(&tmp, "t.c");
+    defer file.close();
+    try emitMemset(&file, 1, "dst", "0", "sizeof(x)");
+    var buf: [256]u8 = undefined;
+    const out = try readTmpFile(&tmp, "t.c", &buf);
+    try std.testing.expectEqualStrings("    memset(dst, 0, sizeof(x));\n", out);
+}
+
+test "emitMemcpy generates correct output" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var file = try createTmpFile(&tmp, "t.c");
+    defer file.close();
+    try emitMemcpy(&file, 0, "a", "b", "4");
+    var buf: [256]u8 = undefined;
+    const out = try readTmpFile(&tmp, "t.c", &buf);
+    try std.testing.expectEqualStrings("memcpy(a, b, 4);\n", out);
+}
+
+test "incrementOffset generates correct output" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var file = try createTmpFile(&tmp, "t.c");
+    defer file.close();
+    try incrementOffset(&file, 1, "8");
+    var buf: [256]u8 = undefined;
+    const out = try readTmpFile(&tmp, "t.c", &buf);
+    try std.testing.expectEqualStrings("    off += 8;\n", out);
+}
+
+test "LoopStack open and close loops" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var file = try createTmpFile(&tmp, "t.c");
+    defer file.close();
+    var ls = LoopStack.init(&file, 1);
+    try std.testing.expectEqual(@as(usize, 1), ls.depth());
+    try ls.openLoop(.{ .len = 3, .stride_bytes = 4 }, 0);
+    try std.testing.expectEqual(@as(usize, 2), ls.depth());
+    try ls.closeLoops(1);
+    try std.testing.expectEqual(@as(usize, 1), ls.depth());
+    var buf: [512]u8 = undefined;
+    const out = try readTmpFile(&tmp, "t.c", &buf);
+    try std.testing.expect(std.mem.indexOf(u8, out, "for (size_t i0 = 0; i0 < 3; i0++)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "}") != null);
+}
+
+// ---------------------------------------------------------------------------
+// Generator tests
+// ---------------------------------------------------------------------------
+
+test "emitDomainTables with .values field" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var file = try createTmpFile(&tmp, "t.c");
+    defer file.close();
+    const fields: []Parser.Field = @constCast(&[_]Parser.Field{.{
+        .name = ".x",
+        .bit_width = 8,
+        .is_padding = false,
+        .domain = .{ .values = &.{ &[_]u8{0xAA}, &[_]u8{0xBB} } },
+    }});
+    const globals: []const Parser.Global = &.{.{
+        .name = "g",
+        .source_file = "",
+        .size_bytes = 1,
+        .is_static = false,
+        .dims = &.{},
+        .fields = fields,
+    }};
+    try emitDomainTables(globals, &file);
+    var buf: [2048]u8 = undefined;
+    const out = try readTmpFile(&tmp, "t.c", &buf);
+    try std.testing.expect(std.mem.indexOf(u8, out, "FM_VAL_0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "0xAA") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "FM_VAL_0_COUNT 2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "FM_VAL_0_BYTES 1") != null);
+}
+
+test "emitDomainTables with .pointers field" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var file = try createTmpFile(&tmp, "t.c");
+    defer file.close();
+    const fields: []Parser.Field = @constCast(&[_]Parser.Field{.{
+        .name = ".fp",
+        .bit_width = 64,
+        .is_padding = false,
+        .domain = .{ .pointers = &.{"handler_a"} },
+    }});
+    const globals: []const Parser.Global = &.{.{
+        .name = "g",
+        .source_file = "",
+        .size_bytes = 8,
+        .is_static = false,
+        .dims = &.{},
+        .fields = fields,
+    }};
+    try emitDomainTables(globals, &file);
+    var buf: [2048]u8 = undefined;
+    const out = try readTmpFile(&tmp, "t.c", &buf);
+    try std.testing.expect(std.mem.indexOf(u8, out, "FM_PTR_0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "&handler_a") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "FM_PTR_0_COUNT 1") != null);
+}
+
+test "emitDomainTables skips padding fields" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var file = try createTmpFile(&tmp, "t.c");
+    defer file.close();
+    const fields: []Parser.Field = @constCast(&[_]Parser.Field{.{
+        .name = ".pad0",
+        .bit_width = 8,
+        .is_padding = true,
+        .domain = .top,
+    }});
+    const globals: []const Parser.Global = &.{.{
+        .name = "g",
+        .source_file = "",
+        .size_bytes = 1,
+        .is_static = false,
+        .dims = &.{},
+        .fields = fields,
+    }};
+    try emitDomainTables(globals, &file);
+    var buf: [256]u8 = undefined;
+    const out = try readTmpFile(&tmp, "t.c", &buf);
+    try std.testing.expectEqual(@as(usize, 0), out.len);
+}
+
+test "emitSampler generates sample_invariant for .top field" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var file = try createTmpFile(&tmp, "t.c");
+    defer file.close();
+    const fields: []Parser.Field = @constCast(&[_]Parser.Field{.{
+        .name = ".x",
+        .bit_width = 32,
+        .is_padding = false,
+        .domain = .top,
+    }});
+    const globals: []const Parser.Global = &.{.{
+        .name = "g",
+        .source_file = "",
+        .size_bytes = 4,
+        .is_static = false,
+        .dims = &.{},
+        .fields = fields,
+    }};
+    try emitSampler(alloc, globals, &file);
+    var buf: [4096]u8 = undefined;
+    const out = try readTmpFile(&tmp, "t.c", &buf);
+    try std.testing.expect(std.mem.indexOf(u8, out, "sample_invariant") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "memset(g, 0, sizeof(g))") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "memcpy(&g[0], &data[off], 4)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "off += 4") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "return off;") != null);
+}
+
+test "emitSampler with .values domain" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var file = try createTmpFile(&tmp, "t.c");
+    defer file.close();
+    const fields: []Parser.Field = @constCast(&[_]Parser.Field{.{
+        .name = ".x",
+        .bit_width = 8,
+        .is_padding = false,
+        .domain = .{ .values = &.{ &[_]u8{0}, &[_]u8{1} } },
+    }});
+    const globals: []const Parser.Global = &.{.{
+        .name = "g",
+        .source_file = "",
+        .size_bytes = 1,
+        .is_static = false,
+        .dims = &.{},
+        .fields = fields,
+    }};
+    try emitSampler(alloc, globals, &file);
+    var buf: [4096]u8 = undefined;
+    const out = try readTmpFile(&tmp, "t.c", &buf);
+    try std.testing.expect(std.mem.indexOf(u8, out, "idx_FM_VAL_0 = data[off] % 2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "off += 1") != null);
+}
+
+test "emitSampler with .pointers domain" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var file = try createTmpFile(&tmp, "t.c");
+    defer file.close();
+    const fields: []Parser.Field = @constCast(&[_]Parser.Field{.{
+        .name = ".fp",
+        .bit_width = 64,
+        .is_padding = false,
+        .domain = .{ .pointers = &.{"handler_a"} },
+    }});
+    const globals: []const Parser.Global = &.{.{
+        .name = "g",
+        .source_file = "",
+        .size_bytes = 8,
+        .is_static = false,
+        .dims = &.{},
+        .fields = fields,
+    }};
+    try emitSampler(alloc, globals, &file);
+    var buf: [4096]u8 = undefined;
+    const out = try readTmpFile(&tmp, "t.c", &buf);
+    try std.testing.expect(std.mem.indexOf(u8, out, "idx_FM_PTR_0 = data[off] % 1") != null);
+}
+
+test "emitSampler skips padding fields" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var file = try createTmpFile(&tmp, "t.c");
+    defer file.close();
+    const fields: []Parser.Field = @constCast(&[_]Parser.Field{.{
+        .name = ".pad0",
+        .bit_width = 24,
+        .is_padding = true,
+        .domain = .top,
+    }});
+    const globals: []const Parser.Global = &.{.{
+        .name = "g",
+        .source_file = "",
+        .size_bytes = 4,
+        .is_static = false,
+        .dims = &.{},
+        .fields = fields,
+    }};
+    try emitSampler(alloc, globals, &file);
+    var buf: [4096]u8 = undefined;
+    const out = try readTmpFile(&tmp, "t.c", &buf);
+    try std.testing.expect(std.mem.indexOf(u8, out, "memcpy") == null);
+}
+
+test "emitSampler with static global uses mangled name" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var file = try createTmpFile(&tmp, "t.c");
+    defer file.close();
+    const fields: []Parser.Field = @constCast(&[_]Parser.Field{.{
+        .name = ".x",
+        .bit_width = 8,
+        .is_padding = false,
+        .domain = .top,
+    }});
+    const globals: []const Parser.Global = &.{.{
+        .name = "var",
+        .source_file = "src/a.c",
+        .size_bytes = 1,
+        .is_static = true,
+        .dims = &.{},
+        .fields = fields,
+    }};
+    try emitSampler(alloc, globals, &file);
+    var buf: [4096]u8 = undefined;
+    const out = try readTmpFile(&tmp, "t.c", &buf);
+    try std.testing.expect(std.mem.indexOf(u8, out, "src_a_c_var") != null);
+}
+
+test "emitChecker generates padding zero-check" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var file = try createTmpFile(&tmp, "t.c");
+    defer file.close();
+    const fields: []Parser.Field = @constCast(&[_]Parser.Field{.{
+        .name = ".pad0",
+        .offset_bits = 8,
+        .bit_width = 24,
+        .is_padding = true,
+        .domain = .top,
+    }});
+    const globals: []const Parser.Global = &.{.{
+        .name = "g",
+        .source_file = "",
+        .size_bytes = 4,
+        .is_static = false,
+        .dims = &.{},
+        .fields = fields,
+    }};
+    try emitChecker(alloc, globals, &file);
+    var buf: [4096]u8 = undefined;
+    const out = try readTmpFile(&tmp, "t.c", &buf);
+    try std.testing.expect(std.mem.indexOf(u8, out, "check_invariant") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "!= 0) return -1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "return 0;") != null);
+}
+
+test "emitChecker generates .values validation" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var file = try createTmpFile(&tmp, "t.c");
+    defer file.close();
+    const fields: []Parser.Field = @constCast(&[_]Parser.Field{.{
+        .name = ".x",
+        .bit_width = 8,
+        .is_padding = false,
+        .domain = .{ .values = &.{ &[_]u8{0}, &[_]u8{1} } },
+    }});
+    const globals: []const Parser.Global = &.{.{
+        .name = "g",
+        .source_file = "",
+        .size_bytes = 1,
+        .is_static = false,
+        .dims = &.{},
+        .fields = fields,
+    }};
+    try emitChecker(alloc, globals, &file);
+    var buf: [4096]u8 = undefined;
+    const out = try readTmpFile(&tmp, "t.c", &buf);
+    try std.testing.expect(std.mem.indexOf(u8, out, "FM_VAL_0_COUNT") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "memcmp") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "if (!found) return -1") != null);
+}
+
+test "emitChecker generates .pointers validation" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var file = try createTmpFile(&tmp, "t.c");
+    defer file.close();
+    const fields: []Parser.Field = @constCast(&[_]Parser.Field{.{
+        .name = ".fp",
+        .bit_width = 64,
+        .is_padding = false,
+        .domain = .{ .pointers = &.{"handler_a"} },
+    }});
+    const globals: []const Parser.Global = &.{.{
+        .name = "g",
+        .source_file = "",
+        .size_bytes = 8,
+        .is_static = false,
+        .dims = &.{},
+        .fields = fields,
+    }};
+    try emitChecker(alloc, globals, &file);
+    var buf: [4096]u8 = undefined;
+    const out = try readTmpFile(&tmp, "t.c", &buf);
+    try std.testing.expect(std.mem.indexOf(u8, out, "FM_PTR_0_COUNT") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "void *current") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "if (!found) return -1") != null);
+}
+
+test "emitChecker skips unaligned bitfield offsets" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var file = try createTmpFile(&tmp, "t.c");
+    defer file.close();
+    const fields: []Parser.Field = @constCast(&[_]Parser.Field{.{
+        .name = ".bf",
+        .offset_bits = 3,
+        .bit_width = 5,
+        .is_padding = false,
+        .domain = .top,
+    }});
+    const globals: []const Parser.Global = &.{.{
+        .name = "g",
+        .source_file = "",
+        .size_bytes = 1,
+        .is_static = false,
+        .dims = &.{},
+        .fields = fields,
+    }};
+    try emitChecker(alloc, globals, &file);
+    var buf: [4096]u8 = undefined;
+    const out = try readTmpFile(&tmp, "t.c", &buf);
+    try std.testing.expect(std.mem.indexOf(u8, out, "memcpy") == null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "memcmp") == null);
+}
+
+test "emitEntrypoint generates LLVMFuzzerTestOneInput" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var file = try createTmpFile(&tmp, "t.c");
+    defer file.close();
+    try emitEntrypoint(alloc, &file, "MyHarness");
+    var buf: [2048]u8 = undefined;
+    const out = try readTmpFile(&tmp, "t.c", &buf);
+    try std.testing.expect(std.mem.indexOf(u8, out, "LLVMFuzzerTestOneInput") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "sample_invariant") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "MyHarness(data, size)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "check_invariant()") != null);
+}
+
+test "writeFuzzerC end-to-end produces valid output" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir_path = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(dir_path);
+    const out_path = try std.fs.path.join(alloc, &.{ dir_path, "fuzzer.c" });
+    defer alloc.free(out_path);
+    const redef_path = try std.fs.path.join(alloc, &.{ dir_path, "fuzzer.redef" });
+    defer alloc.free(redef_path);
+
+    const fields: []Parser.Field = @constCast(&[_]Parser.Field{
+        .{
+            .name = ".x",
+            .bit_width = 32,
+            .is_padding = false,
+            .domain = .top,
+        },
+        .{
+            .name = ".pad0",
+            .offset_bits = 32,
+            .bit_width = 32,
+            .is_padding = true,
+            .domain = .top,
+        },
+    });
+    const globals: []const Parser.Global = &.{.{
+        .name = "g",
+        .source_file = "",
+        .size_bytes = 8,
+        .is_static = false,
+        .dims = &.{},
+        .fields = fields,
+    }};
+
+    try writeFuzzerC(alloc, globals, 4, out_path, redef_path, "TestHarness", &.{});
+
+    var buf: [16384]u8 = undefined;
+    const out = try readTmpFile(&tmp, "fuzzer.c", &buf);
+    try std.testing.expect(std.mem.indexOf(u8, out, "#include <assert.h>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "int TestHarness(const uint8_t *data, size_t size)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "#define ABSOLUTION_GLOBALS_SIZE 4") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "uint8_t __attribute__((weak)) g[8]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "sample_invariant") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "check_invariant") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "LLVMFuzzerTestOneInput") != null);
+}
+
+test "writeFuzzerC with static global writes redef file" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir_path = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(dir_path);
+    const out_path = try std.fs.path.join(alloc, &.{ dir_path, "fuzzer2.c" });
+    defer alloc.free(out_path);
+    const redef_path = try std.fs.path.join(alloc, &.{ dir_path, "fuzzer2.redef" });
+    defer alloc.free(redef_path);
+
+    const fields: []Parser.Field = @constCast(&[_]Parser.Field{.{
+        .name = ".x",
+        .bit_width = 8,
+        .is_padding = false,
+        .domain = .top,
+    }});
+    const globals: []const Parser.Global = &.{.{
+        .name = "cfg",
+        .source_file = "src/mod.c",
+        .size_bytes = 1,
+        .is_static = true,
+        .dims = &.{},
+        .fields = fields,
+    }};
+
+    try writeFuzzerC(alloc, globals, 1, out_path, redef_path, "TestEntry", &.{});
+
+    var buf: [4096]u8 = undefined;
+    const redef_out = try readTmpFile(&tmp, "fuzzer2.redef", &buf);
+    try std.testing.expect(std.mem.indexOf(u8, redef_out, "src/mod.c cfg src_mod_c_cfg") != null);
+
+    var buf2: [16384]u8 = undefined;
+    const c_out = try readTmpFile(&tmp, "fuzzer2.c", &buf2);
+    try std.testing.expect(std.mem.indexOf(u8, c_out, "src_mod_c_cfg") != null);
+}
+
+test "writeFuzzerC with func_symbols emits extern declarations" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir_path = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(dir_path);
+    const out_path = try std.fs.path.join(alloc, &.{ dir_path, "fuzzer3.c" });
+    defer alloc.free(out_path);
+    const redef_path = try std.fs.path.join(alloc, &.{ dir_path, "fuzzer3.redef" });
+    defer alloc.free(redef_path);
+
+    const globals: []const Parser.Global = &.{};
+    try writeFuzzerC(alloc, globals, 0, out_path, redef_path, "Entry", &.{"my_handler"});
+
+    var buf: [8192]u8 = undefined;
+    const c_out = try readTmpFile(&tmp, "fuzzer3.c", &buf);
+    try std.testing.expect(std.mem.indexOf(u8, c_out, "extern void my_handler(void)") != null);
+}
+
+test "emitSampler with global array dims opens loops" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var file = try createTmpFile(&tmp, "t.c");
+    defer file.close();
+    const fields: []Parser.Field = @constCast(&[_]Parser.Field{.{
+        .name = ".x",
+        .bit_width = 8,
+        .is_padding = false,
+        .domain = .top,
+    }});
+    const globals: []const Parser.Global = &.{.{
+        .name = "arr",
+        .source_file = "",
+        .size_bytes = 30,
+        .is_static = false,
+        .dims = &.{.{ .len = 10, .stride_bytes = 3 }},
+        .fields = fields,
+    }};
+    try emitSampler(alloc, globals, &file);
+    var buf: [4096]u8 = undefined;
+    const out = try readTmpFile(&tmp, "t.c", &buf);
+    try std.testing.expect(std.mem.indexOf(u8, out, "for (size_t i0 = 0; i0 < 10; i0++)") != null);
+}
+
+test "emitChecker with global array dims opens loops" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var file = try createTmpFile(&tmp, "t.c");
+    defer file.close();
+    const fields: []Parser.Field = @constCast(&[_]Parser.Field{.{
+        .name = ".x",
+        .bit_width = 8,
+        .is_padding = true,
+        .domain = .top,
+    }});
+    const globals: []const Parser.Global = &.{.{
+        .name = "arr",
+        .source_file = "",
+        .size_bytes = 30,
+        .is_static = false,
+        .dims = &.{.{ .len = 10, .stride_bytes = 3 }},
+        .fields = fields,
+    }};
+    try emitChecker(alloc, globals, &file);
+    var buf: [4096]u8 = undefined;
+    const out = try readTmpFile(&tmp, "t.c", &buf);
+    try std.testing.expect(std.mem.indexOf(u8, out, "for (size_t i0 = 0; i0 < 10; i0++)") != null);
+}

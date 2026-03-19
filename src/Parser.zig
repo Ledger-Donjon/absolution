@@ -279,3 +279,110 @@ fn printDiagnostics(comp: *aro.Compilation) void {
         msg.write(&stdout.interface, .escape_codes, true) catch {};
     }
 }
+
+test "isHeaderFile recognizes .h extension" {
+    try std.testing.expect(isHeaderFile("foo.h"));
+    try std.testing.expect(isHeaderFile("/path/to/header.h"));
+}
+
+test "isHeaderFile recognizes .hpp extension" {
+    try std.testing.expect(isHeaderFile("bar.hpp"));
+}
+
+test "isHeaderFile recognizes .hxx extension" {
+    try std.testing.expect(isHeaderFile("baz.hxx"));
+}
+
+test "isHeaderFile recognizes .H extension" {
+    try std.testing.expect(isHeaderFile("Quux.H"));
+}
+
+test "isHeaderFile recognizes .hh extension" {
+    try std.testing.expect(isHeaderFile("file.hh"));
+}
+
+test "isHeaderFile rejects .c files" {
+    try std.testing.expect(!isHeaderFile("main.c"));
+}
+
+test "isHeaderFile rejects .zig files" {
+    try std.testing.expect(!isHeaderFile("root.zig"));
+}
+
+test "isHeaderFile rejects empty string" {
+    try std.testing.expect(!isHeaderFile(""));
+}
+
+test "isHeaderFile rejects .txt files" {
+    try std.testing.expect(!isHeaderFile("notes.txt"));
+}
+
+test "isHeaderFile rejects files without extension" {
+    try std.testing.expect(!isHeaderFile("Makefile"));
+}
+
+test "freeGlobals releases all memory" {
+    const alloc = std.testing.allocator;
+    var globals: std.ArrayList(Global) = .empty;
+
+    const dims = try alloc.alloc(ir.Dimension, 1);
+    dims[0] = .{ .len = 5, .stride_bytes = 4 };
+
+    const fields = try alloc.alloc(Field, 2);
+    fields[0] = .{
+        .name = try alloc.dupe(u8, ".x"),
+        .bit_width = 32,
+        .dims = try alloc.alloc(ir.Dimension, 0),
+    };
+    fields[1] = .{
+        .name = try alloc.dupe(u8, ".pad0"),
+        .bit_width = 32,
+        .is_padding = true,
+        .dims = try alloc.alloc(ir.Dimension, 0),
+    };
+
+    try globals.append(alloc, .{
+        .name = try alloc.dupe(u8, "my_global"),
+        .source_file = try alloc.dupe(u8, "test.c"),
+        .size_bytes = 8,
+        .is_static = false,
+        .dims = dims,
+        .fields = fields,
+    });
+
+    freeGlobals(alloc, &globals);
+}
+
+test "freeGlobals handles empty list" {
+    const alloc = std.testing.allocator;
+    var globals: std.ArrayList(Global) = .empty;
+    freeGlobals(alloc, &globals);
+}
+
+test "freeGlobals handles multiple globals" {
+    const alloc = std.testing.allocator;
+    var globals: std.ArrayList(Global) = .empty;
+
+    for (0..3) |i| {
+        var name_buf: [16]u8 = undefined;
+        const name = try std.fmt.bufPrint(&name_buf, "g{d}", .{i});
+
+        const fields = try alloc.alloc(Field, 1);
+        fields[0] = .{
+            .name = try alloc.dupe(u8, ".x"),
+            .bit_width = 32,
+            .dims = try alloc.alloc(ir.Dimension, 0),
+        };
+
+        try globals.append(alloc, .{
+            .name = try alloc.dupe(u8, name),
+            .source_file = try alloc.dupe(u8, "test.c"),
+            .size_bytes = 4,
+            .is_static = false,
+            .dims = try alloc.alloc(ir.Dimension, 0),
+            .fields = fields,
+        });
+    }
+
+    freeGlobals(alloc, &globals);
+}

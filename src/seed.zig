@@ -43,3 +43,128 @@ pub fn writeSeed(path: []const u8, size: usize) !void {
         remaining -= n;
     }
 }
+
+test "neededBytesFromGlobals returns 0 for empty globals" {
+    const globals: []const ir.Global = &.{};
+    try std.testing.expectEqual(@as(usize, 0), neededBytesFromGlobals(globals));
+}
+
+test "neededBytesFromGlobals skips padding fields" {
+    const fields: []const ir.Field = &.{.{
+        .name = ".pad0",
+        .bit_width = 32,
+        .is_padding = true,
+    }};
+    const globals: []const ir.Global = &.{.{
+        .name = "g",
+        .source_file = "",
+        .size_bytes = 4,
+        .is_static = false,
+        .dims = &.{},
+        .fields = @constCast(fields),
+    }};
+    try std.testing.expectEqual(@as(usize, 0), neededBytesFromGlobals(globals));
+}
+
+test "neededBytesFromGlobals counts .top bytes by width" {
+    const fields: []const ir.Field = &.{.{
+        .name = ".x",
+        .bit_width = 32,
+        .is_padding = false,
+        .domain = .top,
+    }};
+    const globals: []const ir.Global = &.{.{
+        .name = "g",
+        .source_file = "",
+        .size_bytes = 4,
+        .is_static = false,
+        .dims = &.{},
+        .fields = @constCast(fields),
+    }};
+    try std.testing.expectEqual(@as(usize, 4), neededBytesFromGlobals(globals));
+}
+
+test "neededBytesFromGlobals counts .values/.pointers as 1 byte" {
+    const fields: []const ir.Field = &.{
+        .{
+            .name = ".a",
+            .bit_width = 32,
+            .is_padding = false,
+            .domain = .{ .values = &.{"0xAA"} },
+        },
+        .{
+            .name = ".b",
+            .bit_width = 64,
+            .is_padding = false,
+            .domain = .{ .pointers = &.{"func"} },
+        },
+    };
+    const globals: []const ir.Global = &.{.{
+        .name = "g",
+        .source_file = "",
+        .size_bytes = 12,
+        .is_static = false,
+        .dims = &.{},
+        .fields = @constCast(fields),
+    }};
+    try std.testing.expectEqual(@as(usize, 2), neededBytesFromGlobals(globals));
+}
+
+test "neededBytesFromGlobals multiplies by global and field dims" {
+    const fields: []const ir.Field = &.{.{
+        .name = ".x",
+        .bit_width = 8,
+        .is_padding = false,
+        .domain = .top,
+        .dims = &.{.{ .len = 4, .stride_bytes = 1 }},
+    }};
+    const globals: []const ir.Global = &.{.{
+        .name = "arr",
+        .source_file = "",
+        .size_bytes = 12,
+        .is_static = false,
+        .dims = &.{.{ .len = 3, .stride_bytes = 4 }},
+        .fields = @constCast(fields),
+    }};
+    // 1 byte * global_dim(3) * field_dim(4) = 12
+    try std.testing.expectEqual(@as(usize, 12), neededBytesFromGlobals(globals));
+}
+
+test "writeSeed creates file with exact size" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const path = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(path);
+    const full = try std.fs.path.join(std.testing.allocator, &.{ path, "seed.bin" });
+    defer std.testing.allocator.free(full);
+
+    try writeSeed(full, 100);
+    const stat = try tmp.dir.statFile("seed.bin");
+    try std.testing.expectEqual(@as(u64, 100), stat.size);
+}
+
+test "writeSeed creates empty file for size 0" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const path = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(path);
+    const full = try std.fs.path.join(std.testing.allocator, &.{ path, "empty.bin" });
+    defer std.testing.allocator.free(full);
+
+    try writeSeed(full, 0);
+    const stat = try tmp.dir.statFile("empty.bin");
+    try std.testing.expectEqual(@as(u64, 0), stat.size);
+}
+
+test "writeSeed handles size larger than chunk" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const path = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(path);
+    const full = try std.fs.path.join(std.testing.allocator, &.{ path, "big.bin" });
+    defer std.testing.allocator.free(full);
+
+    try writeSeed(full, 5000);
+    const stat = try tmp.dir.statFile("big.bin");
+    try std.testing.expectEqual(@as(u64, 5000), stat.size);
+}

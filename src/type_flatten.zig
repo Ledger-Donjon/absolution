@@ -241,3 +241,124 @@ fn joinFieldName(allocator: std.mem.Allocator, prefix: []const u8, name: []const
     const needs_dot = prefix[prefix.len - 1] != '.';
     return std.fmt.allocPrint(allocator, "{s}{s}{s}", .{ prefix, if (needs_dot) "." else "", name });
 }
+
+test "DimStack append, cloneDims, and pop" {
+    const alloc = std.testing.allocator;
+    var ds = DimStack{};
+    defer ds.deinit(alloc);
+
+    try ds.append(alloc, 3, 8);
+    try ds.append(alloc, 5, 4);
+
+    const cloned = try ds.cloneDims(alloc);
+    defer alloc.free(cloned);
+    try std.testing.expectEqual(@as(usize, 2), cloned.len);
+    try std.testing.expectEqual(@as(usize, 3), cloned[0].len);
+    try std.testing.expectEqual(@as(u64, 8), cloned[0].stride_bytes);
+    try std.testing.expectEqual(@as(usize, 5), cloned[1].len);
+    try std.testing.expectEqual(@as(u64, 4), cloned[1].stride_bytes);
+
+    ds.pop();
+    const cloned2 = try ds.cloneDims(alloc);
+    defer alloc.free(cloned2);
+    try std.testing.expectEqual(@as(usize, 1), cloned2.len);
+}
+
+test "DimStack cloneDims empty" {
+    const alloc = std.testing.allocator;
+    var ds = DimStack{};
+    defer ds.deinit(alloc);
+    const cloned = try ds.cloneDims(alloc);
+    defer alloc.free(cloned);
+    try std.testing.expectEqual(@as(usize, 0), cloned.len);
+}
+
+test "joinFieldName with root prefix" {
+    const alloc = std.testing.allocator;
+    const result = try joinFieldName(alloc, ".", "x");
+    defer alloc.free(result);
+    try std.testing.expectEqualStrings(".x", result);
+}
+
+test "joinFieldName with nested prefix" {
+    const alloc = std.testing.allocator;
+    const result = try joinFieldName(alloc, ".a", "b");
+    defer alloc.free(result);
+    try std.testing.expectEqualStrings(".a.b", result);
+}
+
+test "joinFieldName with empty prefix" {
+    const alloc = std.testing.allocator;
+    const result = try joinFieldName(alloc, "", "x");
+    defer alloc.free(result);
+    try std.testing.expectEqualStrings(".x", result);
+}
+
+test "joinFieldName with trailing dot prefix" {
+    const alloc = std.testing.allocator;
+    const result = try joinFieldName(alloc, ".a.", "b");
+    defer alloc.free(result);
+    try std.testing.expectEqualStrings(".a.b", result);
+}
+
+fn freeField(alloc: std.mem.Allocator, f: *ir.Field) void {
+    alloc.free(f.name);
+    alloc.free(f.dims);
+}
+
+test "addPadding creates correct padding field" {
+    const alloc = std.testing.allocator;
+    var fields = Fields{};
+    defer {
+        for (fields.items) |*f| freeField(alloc, f);
+        fields.deinit(alloc);
+    }
+    var ds = DimStack{};
+    defer ds.deinit(alloc);
+    try ds.append(alloc, 2, 8);
+
+    var idx: usize = 0;
+    try addPadding(alloc, &fields, ".", ds, 24, 32, &idx);
+
+    try std.testing.expectEqual(@as(usize, 1), fields.items.len);
+    try std.testing.expectEqualStrings("._pad0", fields.items[0].name);
+    try std.testing.expectEqual(@as(usize, 24), fields.items[0].bit_width);
+    try std.testing.expectEqual(@as(usize, 32), fields.items[0].offset_bits);
+    try std.testing.expect(fields.items[0].is_padding);
+    try std.testing.expectEqual(@as(usize, 1), fields.items[0].dims.len);
+    try std.testing.expectEqual(@as(usize, 1), idx);
+}
+
+test "addPadding with zero bits is no-op" {
+    const alloc = std.testing.allocator;
+    var fields = Fields{};
+    defer fields.deinit(alloc);
+    var ds = DimStack{};
+    defer ds.deinit(alloc);
+
+    var idx: usize = 0;
+    try addPadding(alloc, &fields, ".", ds, 0, 0, &idx);
+
+    try std.testing.expectEqual(@as(usize, 0), fields.items.len);
+    try std.testing.expectEqual(@as(usize, 0), idx);
+}
+
+test "addPadding increments pad_index" {
+    const alloc = std.testing.allocator;
+    var fields = Fields{};
+    defer {
+        for (fields.items) |*f| freeField(alloc, f);
+        fields.deinit(alloc);
+    }
+    var ds = DimStack{};
+    defer ds.deinit(alloc);
+
+    var idx: usize = 0;
+    try addPadding(alloc, &fields, ".", ds, 8, 0, &idx);
+    try addPadding(alloc, &fields, ".", ds, 16, 8, &idx);
+
+    try std.testing.expectEqual(@as(usize, 2), fields.items.len);
+    try std.testing.expectEqualStrings("._pad0", fields.items[0].name);
+    try std.testing.expectEqualStrings("._pad1", fields.items[1].name);
+    try std.testing.expectEqual(@as(usize, 2), idx);
+}

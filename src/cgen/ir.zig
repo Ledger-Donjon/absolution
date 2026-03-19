@@ -82,3 +82,83 @@ pub const Global = struct {
         allocator.free(self.dims);
     }
 };
+
+test "Field.updateDomain with .top" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var f = Field{
+        .name = "",
+        .bit_width = 8,
+        .domain = .{ .values = &.{"0xAA"} },
+    };
+    try f.updateDomain(arena.allocator(), .top);
+    try std.testing.expect(f.domain == .top);
+}
+
+test "Field.updateDomain with .values deep-copies" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var f = Field{ .name = "", .bit_width = 8 };
+
+    var src_buf = "AB".*;
+    const src_slice: []const u8 = &src_buf;
+    try f.updateDomain(arena.allocator(), .{ .values = &.{src_slice} });
+
+    try std.testing.expect(f.domain == .values);
+    try std.testing.expectEqual(@as(usize, 1), f.domain.values.len);
+    try std.testing.expectEqualStrings("AB", f.domain.values[0]);
+
+    // Mutate original — copy must be unaffected
+    src_buf[0] = 'Z';
+    try std.testing.expectEqualStrings("AB", f.domain.values[0]);
+}
+
+test "Field.updateDomain with .pointers deep-copies" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var f = Field{ .name = "", .bit_width = 64 };
+
+    var src_buf = "handler_a".*;
+    const src_slice: []const u8 = &src_buf;
+    try f.updateDomain(arena.allocator(), .{ .pointers = &.{src_slice} });
+
+    try std.testing.expect(f.domain == .pointers);
+    try std.testing.expectEqual(@as(usize, 1), f.domain.pointers.len);
+    try std.testing.expectEqualStrings("handler_a", f.domain.pointers[0]);
+
+    src_buf[0] = 'Z';
+    try std.testing.expectEqualStrings("handler_a", f.domain.pointers[0]);
+}
+
+test "Field.deinit frees owned memory" {
+    const alloc = std.testing.allocator;
+    const dims = try alloc.alloc(Dimension, 1);
+    dims[0] = .{ .len = 5, .stride_bytes = 4 };
+    var f = Field{
+        .name = try alloc.dupe(u8, ".field"),
+        .bit_width = 32,
+        .dims = dims,
+    };
+    f.deinit(alloc);
+}
+
+test "Global.deinit frees fields, name, source_file, and dims" {
+    const alloc = std.testing.allocator;
+    const fields = try alloc.alloc(Field, 1);
+    fields[0] = .{
+        .name = try alloc.dupe(u8, ".x"),
+        .bit_width = 32,
+        .dims = try alloc.alloc(Dimension, 0),
+    };
+    const dims = try alloc.alloc(Dimension, 1);
+    dims[0] = .{ .len = 3, .stride_bytes = 4 };
+    var g = Global{
+        .name = try alloc.dupe(u8, "my_global"),
+        .source_file = try alloc.dupe(u8, "test.c"),
+        .size_bytes = 12,
+        .is_static = false,
+        .dims = dims,
+        .fields = fields,
+    };
+    g.deinit(alloc);
+}

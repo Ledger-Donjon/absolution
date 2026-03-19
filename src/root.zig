@@ -10,8 +10,12 @@ pub const seed = @import("seed.zig");
 pub const Invariant = @import("Invariant.zig");
 pub const emit = @import("cgen/emit.zig");
 
-// Declares here what will be unit tested
 test {
     _ = @import("Invariant.zig");
-    // add other files with tests here as needed
+    _ = @import("cgen/ir.zig");
+    _ = @import("cgen/emit.zig");
+    _ = @import("seed.zig");
+    _ = @import("type_flatten.zig");
+    _ = @import("include_paths.zig");
+    _ = @import("Parser.zig");
 }

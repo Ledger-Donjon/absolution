@@ -237,3 +237,208 @@ test "applyToGlobals handles static globals with same name from different files"
     // file2.c's "var" should remain unconstrained.
     try std.testing.expect(globals.items[1].fields[0].domain == .top);
 }
+
+test "applyToGlobals with .pointers returns func_symbols for unknown targets" {
+    const allocator = std.testing.allocator;
+    var globals = std.ArrayList(Parser.Global).empty;
+    defer Parser.freeGlobals(allocator, &globals);
+
+    const global_fields = try allocator.alloc(Parser.Field, 1);
+    global_fields[0] = .{
+        .name = try allocator.dupe(u8, ".fp"),
+        .bit_width = 64,
+        .is_padding = false,
+        .domain = .top,
+    };
+    try globals.append(allocator, .{
+        .name = try allocator.dupe(u8, "g"),
+        .source_file = try allocator.dupe(u8, ""),
+        .size_bytes = 8,
+        .is_static = false,
+        .dims = &.{},
+        .fields = global_fields,
+    });
+
+    var inv_arena: std.heap.ArenaAllocator = .init(allocator);
+    defer inv_arena.deinit();
+    const inv_alloc = inv_arena.allocator();
+    const inv_fields = try inv_alloc.alloc(ir.Field, 1);
+    inv_fields[0] = .{
+        .name = try inv_alloc.dupe(u8, ".fp"),
+        .bit_width = 64,
+        .domain = .{ .pointers = &.{"unknown_func"} },
+        .is_padding = false,
+    };
+    const inv_globals = try inv_alloc.alloc(ir.Global, 1);
+    inv_globals[0] = .{
+        .name = try inv_alloc.dupe(u8, "g"),
+        .source_file = try inv_alloc.dupe(u8, ""),
+        .size_bytes = 8,
+        .is_static = false,
+        .dims = &.{},
+        .fields = inv_fields,
+    };
+    const inv = Invariant{ .globals = inv_globals, .arena = inv_arena };
+
+    var apply_arena: std.heap.ArenaAllocator = .init(allocator);
+    defer apply_arena.deinit();
+    const result = try inv.applyToGlobals(allocator, apply_arena.allocator(), globals);
+    defer allocator.free(result.func_symbols);
+
+    try std.testing.expect(globals.items[0].fields[0].domain == .pointers);
+    try std.testing.expectEqual(@as(usize, 1), result.func_symbols.len);
+    try std.testing.expectEqualStrings("unknown_func", result.func_symbols[0]);
+}
+
+test "applyToGlobals skips missing global gracefully" {
+    const allocator = std.testing.allocator;
+    var globals = std.ArrayList(Parser.Global).empty;
+    defer Parser.freeGlobals(allocator, &globals);
+
+    const global_fields = try allocator.alloc(Parser.Field, 1);
+    global_fields[0] = .{
+        .name = try allocator.dupe(u8, ".x"),
+        .bit_width = 8,
+        .is_padding = false,
+        .domain = .top,
+    };
+    try globals.append(allocator, .{
+        .name = try allocator.dupe(u8, "existing"),
+        .source_file = try allocator.dupe(u8, ""),
+        .size_bytes = 1,
+        .is_static = false,
+        .dims = &.{},
+        .fields = global_fields,
+    });
+
+    var inv_arena: std.heap.ArenaAllocator = .init(allocator);
+    defer inv_arena.deinit();
+    const inv_alloc = inv_arena.allocator();
+    const inv_fields = try inv_alloc.alloc(ir.Field, 1);
+    inv_fields[0] = .{
+        .name = try inv_alloc.dupe(u8, ".x"),
+        .bit_width = 8,
+        .domain = .{ .values = &.{"0xFF"} },
+        .is_padding = false,
+    };
+    const inv_globals = try inv_alloc.alloc(ir.Global, 1);
+    inv_globals[0] = .{
+        .name = try inv_alloc.dupe(u8, "nonexistent"),
+        .source_file = try inv_alloc.dupe(u8, ""),
+        .size_bytes = 1,
+        .is_static = false,
+        .dims = &.{},
+        .fields = inv_fields,
+    };
+    const inv = Invariant{ .globals = inv_globals, .arena = inv_arena };
+
+    var apply_arena: std.heap.ArenaAllocator = .init(allocator);
+    defer apply_arena.deinit();
+    const result = try inv.applyToGlobals(allocator, apply_arena.allocator(), globals);
+    defer allocator.free(result.func_symbols);
+
+    // "existing" should remain unchanged since invariant targets "nonexistent"
+    try std.testing.expect(globals.items[0].fields[0].domain == .top);
+}
+
+test "applyToGlobals skips missing field gracefully" {
+    const allocator = std.testing.allocator;
+    var globals = std.ArrayList(Parser.Global).empty;
+    defer Parser.freeGlobals(allocator, &globals);
+
+    const global_fields = try allocator.alloc(Parser.Field, 1);
+    global_fields[0] = .{
+        .name = try allocator.dupe(u8, ".x"),
+        .bit_width = 8,
+        .is_padding = false,
+        .domain = .top,
+    };
+    try globals.append(allocator, .{
+        .name = try allocator.dupe(u8, "g"),
+        .source_file = try allocator.dupe(u8, ""),
+        .size_bytes = 1,
+        .is_static = false,
+        .dims = &.{},
+        .fields = global_fields,
+    });
+
+    var inv_arena: std.heap.ArenaAllocator = .init(allocator);
+    defer inv_arena.deinit();
+    const inv_alloc = inv_arena.allocator();
+    const inv_fields = try inv_alloc.alloc(ir.Field, 1);
+    inv_fields[0] = .{
+        .name = try inv_alloc.dupe(u8, ".nonexistent_field"),
+        .bit_width = 8,
+        .domain = .{ .values = &.{"0xFF"} },
+        .is_padding = false,
+    };
+    const inv_globals = try inv_alloc.alloc(ir.Global, 1);
+    inv_globals[0] = .{
+        .name = try inv_alloc.dupe(u8, "g"),
+        .source_file = try inv_alloc.dupe(u8, ""),
+        .size_bytes = 1,
+        .is_static = false,
+        .dims = &.{},
+        .fields = inv_fields,
+    };
+    const inv = Invariant{ .globals = inv_globals, .arena = inv_arena };
+
+    var apply_arena: std.heap.ArenaAllocator = .init(allocator);
+    defer apply_arena.deinit();
+    const result = try inv.applyToGlobals(allocator, apply_arena.allocator(), globals);
+    defer allocator.free(result.func_symbols);
+
+    // ".x" should remain unchanged since invariant targets ".nonexistent_field"
+    try std.testing.expect(globals.items[0].fields[0].domain == .top);
+}
+
+test "uniqueKey returns name for non-static" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const key = try uniqueKey(arena.allocator(), "var", "file.c", false);
+    try std.testing.expectEqualStrings("var", key);
+}
+
+test "uniqueKey returns source-prefixed key for static" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const key = try uniqueKey(arena.allocator(), "var", "file.c", true);
+    try std.testing.expectEqualStrings("file.c\x00var", key);
+}
+
+test "init loads .zon invariant file" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const zon_content =
+        \\.{.{
+        \\    .name = "g",
+        \\    .source_file = "",
+        \\    .size_bytes = 1,
+        \\    .is_static = false,
+        \\    .dims = .{},
+        \\    .fields = .{.{
+        \\        .name = ".x",
+        \\        .offset_bits = 0,
+        \\        .bit_width = 8,
+        \\        .dims = .{},
+        \\        .is_padding = false,
+        \\        .domain = .top,
+        \\    }},
+        \\}}
+    ;
+    try tmp.dir.writeFile(.{ .sub_path = "test.zon", .data = zon_content });
+    const dir_path = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(dir_path);
+    const full_path = try std.fs.path.join(allocator, &.{ dir_path, "test.zon" });
+    defer allocator.free(full_path);
+
+    var inv = try Invariant.init(allocator, full_path);
+    defer inv.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), inv.globals.len);
+    try std.testing.expectEqualStrings("g", inv.globals[0].name);
+    try std.testing.expectEqual(@as(usize, 1), inv.globals[0].fields.len);
+    try std.testing.expectEqualStrings(".x", inv.globals[0].fields[0].name);
+}

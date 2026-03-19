@@ -166,3 +166,160 @@ fn getAnyOsAnySubdir(arena: std.mem.Allocator, os: std.Target.Os.Tag) !?[]const 
 
     return try std.fmt.allocPrint(arena, "any-{s}-any", .{os_name});
 }
+
+test "getTargetLibcSubdir x86_64/linux/gnu" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try getTargetLibcSubdir(arena.allocator(), .x86_64, .linux, .gnu);
+    try std.testing.expectEqualStrings("x86-linux-gnu", result.?);
+}
+
+test "getTargetLibcSubdir aarch64/linux/musl" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try getTargetLibcSubdir(arena.allocator(), .aarch64, .linux, .musl);
+    try std.testing.expectEqualStrings("aarch64-linux-musl", result.?);
+}
+
+test "getTargetLibcSubdir arm/linux/gnueabihf" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try getTargetLibcSubdir(arena.allocator(), .arm, .linux, .gnueabihf);
+    try std.testing.expectEqualStrings("arm-linux-gnueabi", result.?);
+}
+
+test "getTargetLibcSubdir wasm32 returns null" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try getTargetLibcSubdir(arena.allocator(), .wasm32, .linux, .gnu);
+    try std.testing.expect(result == null);
+}
+
+test "getTargetLibcSubdir freestanding returns null" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try getTargetLibcSubdir(arena.allocator(), .x86_64, .freestanding, .gnu);
+    try std.testing.expect(result == null);
+}
+
+test "getTargetLibcSubdir none abi on linux defaults to gnu" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try getTargetLibcSubdir(arena.allocator(), .x86_64, .linux, .none);
+    try std.testing.expectEqualStrings("x86-linux-gnu", result.?);
+}
+
+test "getTargetLibcSubdir none abi on non-linux returns null" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try getTargetLibcSubdir(arena.allocator(), .x86_64, .windows, .none);
+    try std.testing.expect(result == null);
+}
+
+test "getTargetLibcSubdir riscv64/linux/musl" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try getTargetLibcSubdir(arena.allocator(), .riscv64, .linux, .musl);
+    try std.testing.expectEqualStrings("riscv64-linux-musl", result.?);
+}
+
+test "getTargetLibcSubdir powerpc64/linux/gnu" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try getTargetLibcSubdir(arena.allocator(), .powerpc64, .linux, .gnu);
+    try std.testing.expectEqualStrings("powerpc64-linux-gnu", result.?);
+}
+
+test "getTargetLibcSubdir x86_64/macos mapped to darwin" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try getTargetLibcSubdir(arena.allocator(), .x86_64, .macos, .gnu);
+    try std.testing.expectEqualStrings("x86-darwin-gnu", result.?);
+}
+
+test "getTargetLibcSubdir android abi" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try getTargetLibcSubdir(arena.allocator(), .aarch64, .linux, .android);
+    try std.testing.expectEqualStrings("aarch64-linux-android", result.?);
+}
+
+test "getGenericLibcSubdir gnu returns generic-glibc" {
+    try std.testing.expectEqualStrings("generic-glibc", getGenericLibcSubdir(.gnu).?);
+}
+
+test "getGenericLibcSubdir musl returns generic-musl" {
+    try std.testing.expectEqualStrings("generic-musl", getGenericLibcSubdir(.musl).?);
+}
+
+test "getGenericLibcSubdir none returns generic-glibc" {
+    try std.testing.expectEqualStrings("generic-glibc", getGenericLibcSubdir(.none).?);
+}
+
+test "getGenericLibcSubdir eabi returns null" {
+    try std.testing.expect(getGenericLibcSubdir(.eabi) == null);
+}
+
+test "getGenericLibcSubdir gnueabihf returns generic-glibc" {
+    try std.testing.expectEqualStrings("generic-glibc", getGenericLibcSubdir(.gnueabihf).?);
+}
+
+test "getGenericLibcSubdir musleabi returns generic-musl" {
+    try std.testing.expectEqualStrings("generic-musl", getGenericLibcSubdir(.musleabi).?);
+}
+
+test "getArchOsAnySubdir x86_64/linux" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try getArchOsAnySubdir(arena.allocator(), .x86_64, .linux);
+    try std.testing.expectEqualStrings("x86-linux-any", result.?);
+}
+
+test "getArchOsAnySubdir wasm32 returns null" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try getArchOsAnySubdir(arena.allocator(), .wasm32, .linux);
+    try std.testing.expect(result == null);
+}
+
+test "getArchOsAnySubdir freestanding returns null" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try getArchOsAnySubdir(arena.allocator(), .x86_64, .freestanding);
+    try std.testing.expect(result == null);
+}
+
+test "getArchOsAnySubdir riscv64/freebsd" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try getArchOsAnySubdir(arena.allocator(), .riscv64, .freebsd);
+    try std.testing.expectEqualStrings("riscv64-freebsd-any", result.?);
+}
+
+test "getAnyOsAnySubdir linux" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try getAnyOsAnySubdir(arena.allocator(), .linux);
+    try std.testing.expectEqualStrings("any-linux-any", result.?);
+}
+
+test "getAnyOsAnySubdir freestanding returns null" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try getAnyOsAnySubdir(arena.allocator(), .freestanding);
+    try std.testing.expect(result == null);
+}
+
+test "getAnyOsAnySubdir windows" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try getAnyOsAnySubdir(arena.allocator(), .windows);
+    try std.testing.expectEqualStrings("any-windows-any", result.?);
+}
+
+test "getAnyOsAnySubdir macos mapped to darwin" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try getAnyOsAnySubdir(arena.allocator(), .macos);
+    try std.testing.expectEqualStrings("any-darwin-any", result.?);
+}
