@@ -332,18 +332,22 @@ fn emitSampler(allocator: std.mem.Allocator, globals: []const Parser.Global, fil
                     const label = try std.fmt.bufPrint(&label_buf, "FM_VAL_{d}", .{value_idx});
                     value_idx += 1;
 
-                    try writeIndent(file, current_depth);
-                    try file.writeAll("size_t idx_");
-                    try file.writeAll(label);
-                    try file.writeAll(" = data[off] % ");
-                    const count_str = try std.fmt.bufPrint(&num_buf, "{d}", .{vals.len});
-                    try file.writeAll(count_str);
-                    try file.writeAll(";\n");
+                    if (vals.len == 1) {
+                        try emitMemcpy(file, current_depth, dst_expr, label, bytes_str);
+                    } else {
+                        try writeIndent(file, current_depth);
+                        try file.writeAll("size_t idx_");
+                        try file.writeAll(label);
+                        try file.writeAll(" = data[off] % ");
+                        const count_str = try std.fmt.bufPrint(&num_buf, "{d}", .{vals.len});
+                        try file.writeAll(count_str);
+                        try file.writeAll(";\n");
 
-                    var src_buf: [256]u8 = undefined;
-                    const src = try std.fmt.bufPrint(&src_buf, "&{s}[idx_{s} * {s}]", .{ label, label, bytes_str });
-                    try emitMemcpy(file, current_depth, dst_expr, src, bytes_str);
-                    try incrementOffset(file, current_depth, "1");
+                        var src_buf: [256]u8 = undefined;
+                        const src = try std.fmt.bufPrint(&src_buf, "&{s}[idx_{s} * {s}]", .{ label, label, bytes_str });
+                        try emitMemcpy(file, current_depth, dst_expr, src, bytes_str);
+                        try incrementOffset(file, current_depth, "1");
+                    }
                 },
                 .pointers => |ptrs| {
                     if (ptrs.len == 0) continue;
@@ -351,18 +355,24 @@ fn emitSampler(allocator: std.mem.Allocator, globals: []const Parser.Global, fil
                     const ptr_label = try std.fmt.bufPrint(&ptr_label_buf, "FM_PTR_{d}", .{ptr_idx});
                     ptr_idx += 1;
 
-                    try writeIndent(file, current_depth);
-                    try file.writeAll("size_t idx_");
-                    try file.writeAll(ptr_label);
-                    try file.writeAll(" = data[off] % ");
-                    const count_str = try std.fmt.bufPrint(&num_buf, "{d}", .{ptrs.len});
-                    try file.writeAll(count_str);
-                    try file.writeAll(";\n");
+                    if (ptrs.len == 1) {
+                        var src_buf: [128]u8 = undefined;
+                        const src = try std.fmt.bufPrint(&src_buf, "&{s}[0]", .{ptr_label});
+                        try emitMemcpy(file, current_depth, dst_expr, src, bytes_str);
+                    } else {
+                        try writeIndent(file, current_depth);
+                        try file.writeAll("size_t idx_");
+                        try file.writeAll(ptr_label);
+                        try file.writeAll(" = data[off] % ");
+                        const count_str = try std.fmt.bufPrint(&num_buf, "{d}", .{ptrs.len});
+                        try file.writeAll(count_str);
+                        try file.writeAll(";\n");
 
-                    var src_buf: [128]u8 = undefined;
-                    const src = try std.fmt.bufPrint(&src_buf, "&{s}[idx_{s}]", .{ ptr_label, ptr_label });
-                    try emitMemcpy(file, current_depth, dst_expr, src, bytes_str);
-                    try incrementOffset(file, current_depth, "1");
+                        var src_buf: [128]u8 = undefined;
+                        const src = try std.fmt.bufPrint(&src_buf, "&{s}[idx_{s}]", .{ ptr_label, ptr_label });
+                        try emitMemcpy(file, current_depth, dst_expr, src, bytes_str);
+                        try incrementOffset(file, current_depth, "1");
+                    }
                 },
             }
 

@@ -13,7 +13,8 @@ pub fn neededBytesFromGlobals(globals: []const ir.Global) usize {
             const field_mult = dimsProduct(f.dims);
             const bytes: usize = switch (f.domain) {
                 .top => (f.bit_width + 7) / 8,
-                .values, .pointers => 1,
+                .values => |vals| if (vals.len <= 1) 0 else 1,
+                .pointers => |ptrs| if (ptrs.len <= 1) 0 else 1,
             };
             total += bytes * global_mult * field_mult;
         }
