@@ -24,7 +24,7 @@ absolution/
 │       ├── <file>.c.in       # Optional input invariant
 │       └── <file>.c.zon      # Golden output
 ├── scripts/
-│   ├── integration.py        # pytest-based integration test runner
+│   ├── integration.zig       # Integration test runner (zig run scripts/integration.zig)
 │   └── gen-golden.sh         # Golden file generator
 └── build.zig                 # Build configuration
 ```
@@ -96,9 +96,10 @@ zig build run -- --help      # Build and run with args
 ### Testing
 
 ```bash
-zig build test               # Unit tests (in-source)
-zig build test --summary all # Verbose unit test output
-uv run scripts/integration.py  # Integration tests (pytest)
+zig build test                          # Unit tests (in-source)
+zig build test --summary all            # Verbose unit test output
+zig run scripts/integration.zig         # Integration tests
+zig run scripts/integration.zig -- foo  # Run only tests matching "foo"
 ```
 
 ### Adding a new test case
@@ -126,7 +127,7 @@ uv run scripts/integration.py  # Integration tests (pytest)
 
 5. Run to verify:
    ```bash
-   uv run scripts/integration.py
+   zig run scripts/integration.zig
    ```
 
 ## Architecture Notes

@@ -73,8 +73,9 @@ working example with multiple translation units.
 ## Testing
 
 ```bash
-zig build test                # Run unit tests
-uv run scripts/integration.py # Integration tests (pytest)
+zig build test                          # Run unit tests
+zig run scripts/integration.zig         # Integration tests
+zig run scripts/integration.zig -- foo  # Run only tests matching "foo"
 ```
 
 ## Documentation
