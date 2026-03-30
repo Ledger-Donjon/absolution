@@ -14,7 +14,8 @@ pub fn neededBytesFromGlobals(globals: []const ir.Global) usize {
             const bytes: usize = switch (f.domain) {
                 .top => ir.elementBytes(f) * global_mult * field_mult,
                 .values, .pointers => ir.constrainedSelectorBytes(f.domain) * global_mult * field_mult,
-                .whole_values => global_mult * (ir.constrainedSelectorBytes(f.domain) + ir.wholeFieldBytes(f)),
+                // Blob bytes come from emitted domain tables, not from the fuzzer stream.
+                .whole_values => global_mult * ir.constrainedSelectorBytes(f.domain),
             };
             total += bytes;
         }
@@ -131,7 +132,7 @@ test "neededBytesFromGlobals singleton constrained domains use 0 selector bytes"
     try std.testing.expectEqual(@as(usize, 0), neededBytesFromGlobals(globals));
 }
 
-test "neededBytesFromGlobals whole_values counts selector and blob per global instance" {
+test "neededBytesFromGlobals whole_values counts selector bytes per global instance only" {
     const fields: []const ir.Field = &.{
         .{
             .name = ".buf",
@@ -149,8 +150,29 @@ test "neededBytesFromGlobals whole_values counts selector and blob per global in
         .dims = &.{.{ .len = 3, .stride_bytes = 2 }},
         .fields = @constCast(fields),
     }};
-    // global_mult=3, per instance: 1 selector + 2 blob bytes => 3 * 3 = 9
-    try std.testing.expectEqual(@as(usize, 9), neededBytesFromGlobals(globals));
+    // global_mult=3, multi-candidate => 1 selector byte per instance (blobs are static in C)
+    try std.testing.expectEqual(@as(usize, 3), neededBytesFromGlobals(globals));
+}
+
+test "neededBytesFromGlobals whole_values singleton uses zero fuzzer bytes per instance" {
+    const fields: []const ir.Field = &.{
+        .{
+            .name = ".b",
+            .bit_width = 8,
+            .is_padding = false,
+            .dims = &.{.{ .len = 4, .stride_bytes = 1 }},
+            .domain = .{ .whole_values = &.{&[_]u8{ 1, 2, 3, 4 }} },
+        },
+    };
+    const globals: []const ir.Global = &.{.{
+        .name = "pkt",
+        .source_file = "",
+        .size_bytes = 4,
+        .is_static = false,
+        .dims = &.{.{ .len = 2, .stride_bytes = 4 }},
+        .fields = @constCast(fields),
+    }};
+    try std.testing.expectEqual(@as(usize, 0), neededBytesFromGlobals(globals));
 }
 
 test "neededBytesFromGlobals multiplies by global and field dims" {

@@ -244,6 +244,16 @@ test "validateConstrainedDomain rejects more than 256 candidates" {
     try std.testing.expectError(error.TooManyCandidates, validateConstrainedDomain(.{ .values = &vals }));
 }
 
+test "validateConstrainedDomain rejects empty whole_values" {
+    try std.testing.expectError(error.EmptyWholeValuesDomain, validateConstrainedDomain(.{ .whole_values = &.{} }));
+}
+
+test "validateConstrainedDomain rejects more than 256 whole_values candidates" {
+    var blobs: [257][]const u8 = undefined;
+    for (&blobs) |*b| b.* = &[_]u8{0};
+    try std.testing.expectError(error.TooManyCandidates, validateConstrainedDomain(.{ .whole_values = &blobs }));
+}
+
 test "validateFieldDomain whole_values checks blob length" {
     const f_ok: Field = .{
         .name = ".b",

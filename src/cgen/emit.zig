@@ -826,6 +826,34 @@ test "emitDomainTables with .values field" {
     try std.testing.expect(std.mem.indexOf(u8, out, "FM_VAL_0_BYTES 1") != null);
 }
 
+test "emitDomainTables with .whole_values field" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var file = try createTmpFile(&tmp, "t.c");
+    defer file.close();
+    const fields: []Parser.Field = @constCast(&[_]Parser.Field{.{
+        .name = ".b",
+        .bit_width = 8,
+        .is_padding = false,
+        .dims = &.{.{ .len = 4, .stride_bytes = 1 }},
+        .domain = .{ .whole_values = &.{ &[_]u8{ 1, 2, 3, 4 }, &[_]u8{ 5, 6, 7, 8 } } },
+    }});
+    const globals: []const Parser.Global = &.{.{
+        .name = "pkt",
+        .source_file = "",
+        .size_bytes = 4,
+        .is_static = false,
+        .dims = &.{},
+        .fields = fields,
+    }};
+    try emitDomainTables(globals, &file);
+    var buf: [4096]u8 = undefined;
+    const out = try readTmpFile(&tmp, "t.c", &buf);
+    try std.testing.expect(std.mem.indexOf(u8, out, "FM_WVAL_0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "FM_WVAL_0_COUNT 2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "FM_WVAL_0_BLOB_BYTES 4") != null);
+}
+
 test "emitDomainTables with .pointers field" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -935,6 +963,67 @@ test "emitSampler with .values domain" {
     try std.testing.expect(std.mem.indexOf(u8, out, "off += 1") != null);
 }
 
+test "emitSampler with .whole_values multi-candidate" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var file = try createTmpFile(&tmp, "t.c");
+    defer file.close();
+    const fields: []Parser.Field = @constCast(&[_]Parser.Field{.{
+        .name = ".b",
+        .bit_width = 8,
+        .is_padding = false,
+        .dims = &.{.{ .len = 4, .stride_bytes = 1 }},
+        .domain = .{ .whole_values = &.{ &[_]u8{ 1, 2, 3, 4 }, &[_]u8{ 5, 6, 7, 8 } } },
+    }});
+    const globals: []const Parser.Global = &.{.{
+        .name = "pkt",
+        .source_file = "",
+        .size_bytes = 4,
+        .is_static = false,
+        .dims = &.{},
+        .fields = fields,
+    }};
+    try emitSampler(alloc, globals, &file);
+    var buf: [8192]u8 = undefined;
+    const out = try readTmpFile(&tmp, "t.c", &buf);
+    try std.testing.expect(std.mem.indexOf(u8, out, "idx_FM_WVAL_0 = data[off] % 2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "FM_WVAL_0_BLOB_BYTES") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "memcpy(&pkt[0], &FM_WVAL_0[idx_FM_WVAL_0 * FM_WVAL_0_BLOB_BYTES], 4)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "off += 1") != null);
+    // Whole-field path: no per-element field loops for this domain
+    try std.testing.expect(std.mem.indexOf(u8, out, "for (size_t i1 = 0;") == null);
+}
+
+test "emitSampler with .whole_values singleton uses no selector byte" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var file = try createTmpFile(&tmp, "t.c");
+    defer file.close();
+    const fields: []Parser.Field = @constCast(&[_]Parser.Field{.{
+        .name = ".b",
+        .bit_width = 8,
+        .is_padding = false,
+        .dims = &.{.{ .len = 2, .stride_bytes = 1 }},
+        .domain = .{ .whole_values = &.{&[_]u8{ 0xAA, 0xBB }} },
+    }});
+    const globals: []const Parser.Global = &.{.{
+        .name = "pkt",
+        .source_file = "",
+        .size_bytes = 2,
+        .is_static = false,
+        .dims = &.{},
+        .fields = fields,
+    }};
+    try emitSampler(alloc, globals, &file);
+    var buf: [8192]u8 = undefined;
+    const out = try readTmpFile(&tmp, "t.c", &buf);
+    try std.testing.expect(std.mem.indexOf(u8, out, "&FM_WVAL_0[0]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "idx_FM_WVAL_0") == null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "off += 1") == null);
+}
+
 test "emitSampler with .pointers domain" {
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
@@ -1041,6 +1130,35 @@ test "emitChecker generates padding zero-check" {
     try std.testing.expect(std.mem.indexOf(u8, out, "check_invariant") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "!= 0) return -1") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "return 0;") != null);
+}
+
+test "emitChecker generates .whole_values validation" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var file = try createTmpFile(&tmp, "t.c");
+    defer file.close();
+    const fields: []Parser.Field = @constCast(&[_]Parser.Field{.{
+        .name = ".b",
+        .bit_width = 8,
+        .is_padding = false,
+        .dims = &.{.{ .len = 4, .stride_bytes = 1 }},
+        .domain = .{ .whole_values = &.{ &[_]u8{ 1, 2, 3, 4 }, &[_]u8{ 5, 6, 7, 8 } } },
+    }});
+    const globals: []const Parser.Global = &.{.{
+        .name = "pkt",
+        .source_file = "",
+        .size_bytes = 4,
+        .is_static = false,
+        .dims = &.{},
+        .fields = fields,
+    }};
+    try emitChecker(alloc, globals, &file);
+    var buf: [8192]u8 = undefined;
+    const out = try readTmpFile(&tmp, "t.c", &buf);
+    try std.testing.expect(std.mem.indexOf(u8, out, "FM_WVAL_0_COUNT") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "FM_WVAL_0_BLOB_BYTES") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "memcmp(&pkt[0], &FM_WVAL_0[vi * FM_WVAL_0_BLOB_BYTES], FM_WVAL_0_BLOB_BYTES)") != null);
 }
 
 test "emitChecker generates .values validation" {
