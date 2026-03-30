@@ -71,7 +71,7 @@ Handles `.zon` invariant files:
 ### `cgen/ir.zig`
 
 Core data structures:
-- `Domain`: `.top`, `.values`, `.pointers`
+- `Domain`: `.top`, `.values`, `.whole_values`, `.pointers`
 - `Field`: Flattened field with name, width, dimensions, domain
 - `Global`: Named global with dimensions and fields
 
@@ -156,8 +156,8 @@ Padding is detected from layout gaps and emitted as `._padN` fields.
 
 The emitter produces C code with:
 - Nested loops for array dimensions (global and field)
-- Static arrays for `.values` and `.pointers` domains
-- Index-based selection for constrained domains
+- Static tables for `.values`, `.whole_values`, and `.pointers` domains
+- Index-based selection for constrained domains; `.whole_values` copies one blob per field instance
 
 ## Code Style
 

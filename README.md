@@ -6,7 +6,7 @@ Absolution lets you specify an invariant for a program’s global state and fuzz
 
 1. Parse globals from your C translation unit(s) using [aro](https://github.com/Vexu/aro).
 2. Build flattened globals containing fields, padding, and domains.
-3. Optionally apply a `.zon` invariant to constrain field values.
+3. Optionally apply a `.zon` invariant to constrain field values (per-element `.values` / `.pointers`, or whole-field blobs with `.whole_values` on array-shaped fields; see [USAGE.md](USAGE.md)).
 4. Emit `fuzzer.c` with sampling, invariant checking, and libFuzzer entrypoint.
 5. Emit a symbol redefinition file for `objcopy` (handles `static` globals across translation units).
 6. Write an optional seed file sized to the required random bytes.

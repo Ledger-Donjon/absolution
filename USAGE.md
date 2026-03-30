@@ -173,9 +173,17 @@ fields:
 
 | Domain | Description | Fuzzer bytes used |
 |--------|-------------|-------------------|
-| `.top` | Unconstrained bytes from fuzzer input | `bit_width / 8` |
-| `.values` | Fixed literal values (hex strings) | 1 (index selection) |
-| `.pointers` | Addresses of listed symbols | 1 (index selection) |
+| `.top` | Unconstrained bytes from fuzzer input | `element_bytes ×` global instances `×` field instances (see dimensions below) |
+| `.values` | Fixed literal values (hex strings), **per scalar element** | `0` if there is at most one candidate, else `1` selector byte **per element** (each index in the field’s `.dims`, times global array instances) |
+| `.whole_values` | Fixed set of **full field-instance** byte blobs (covers the entire field span, including all of the field’s `.dims`) | `0` if there is at most one candidate, else `1` selector byte **per field instance** (global array instances only; not once per inner array element) |
+| `.pointers` | Addresses of listed symbols (per element, same indexing as `.values`) | Same selector rule as `.values` |
+
+Constrained domains (`.values`, `.whole_values`, `.pointers`) allow at most **256** candidates; each multi-candidate domain uses a single selector byte to pick an index.
+
+**When to use `.values` vs `.whole_values` for array-shaped fields**
+
+- Use **`.values`** when each array element should be chosen independently from the same small set (or when the field is scalar). The sampler loops over dimensions and spends up to one selector byte per element.
+- Use **`.whole_values`** when the entire array (or blob) must be one of a few fixed byte patterns end-to-end. Each candidate blob’s length must equal the field’s total byte span: `(bit_width / 8) × ∏` field dimension lengths. Do not rely on candidate string length alone to imply whole-field semantics; encode intent explicitly with `.whole_values`.
 
 ### Example
 
@@ -222,6 +230,29 @@ fields:
         },
     },
 } }
+```
+
+Whole-field value example (`uint8_t b[8]` must be exactly one of two 8-byte patterns; one selector byte for the field, not eight):
+
+```zig
+.{.{
+    .name = "pkt",
+    .source_file = "my_module.c",
+    .size_bytes = 8,
+    .is_static = false,
+    .dims = .{},
+    .fields = .{.{
+        .name = ".b",
+        .offset_bits = 0,
+        .bit_width = 8,
+        .dims = .{.{ .len = 8, .stride_bytes = 1 }},
+        .is_padding = false,
+        .domain = .{ .whole_values = .{
+            "\x00\x01\x02\x03\x04\x05\x06\x07",
+            "\xf8\xf9\xfa\xfb\xfc\xfd\xfe\xff",
+        } },
+    }},
+}}
 ```
 
 ### Field naming conventions

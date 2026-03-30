@@ -31,6 +31,11 @@ decode → validate → process pipeline. The generated `LLVMFuzzerTestOneInput`
 calls `sample_invariant()` to fill both structs from fuzzer input, then passes
 the remaining bytes to `FuzzDecode()`.
 
+To lock globals to specific value sets, export a `.zon` with `--zon`, edit
+`.domain` (e.g. per-element `.values` or whole-array `.whole_values`), and pass
+that file as the invariant when regenerating; see [USAGE.md](../../USAGE.md) for
+domain encoding and fuzzer-byte accounting.
+
 ### Compile definitions
 
 `decoder.c` uses a compile-time `PROTO_MAX_VERSIONS` define (guarded by
