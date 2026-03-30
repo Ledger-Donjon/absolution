@@ -9,6 +9,7 @@ const clap = @import("clap");
 const absolution = @import("absolution");
 const Invariant = absolution.Invariant;
 const Global = absolution.Parser.Global;
+const ir = absolution.ir;
 const seed = absolution.seed;
 const emit = absolution.emit;
 
@@ -50,6 +51,8 @@ pub fn main() !void {
         globals = res.globals;
         func_symbols = res.func_symbols;
     }
+
+    try ir.validateGlobalsDomains(globals.items);
 
     // Compute needed bytes
     const needed_bytes = seed.neededBytesFromGlobals(globals.items);

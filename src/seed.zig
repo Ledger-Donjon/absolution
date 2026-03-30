@@ -7,24 +7,19 @@ const ir = @import("cgen/ir.zig");
 pub fn neededBytesFromGlobals(globals: []const ir.Global) usize {
     var total: usize = 0;
     for (globals) |g| {
-        const global_mult = dimsProduct(g.dims);
+        const global_mult = ir.dimsProduct(g.dims);
         for (g.fields) |f| {
             if (f.is_padding) continue;
-            const field_mult = dimsProduct(f.dims);
+            const field_mult = ir.dimsProduct(f.dims);
             const bytes: usize = switch (f.domain) {
-                .top => (f.bit_width + 7) / 8,
-                .values, .pointers => 1,
+                .top => ir.elementBytes(f) * global_mult * field_mult,
+                .values, .pointers => ir.constrainedSelectorBytes(f.domain) * global_mult * field_mult,
+                .whole_values => global_mult * (ir.constrainedSelectorBytes(f.domain) + ir.wholeFieldBytes(f)),
             };
-            total += bytes * global_mult * field_mult;
+            total += bytes;
         }
     }
     return total;
-}
-
-fn dimsProduct(dims: []const ir.Dimension) usize {
-    var prod: usize = 1;
-    for (dims) |d| prod *= d.len;
-    return prod;
 }
 
 // Write a file the size given, no garantee on the content is given
@@ -84,7 +79,33 @@ test "neededBytesFromGlobals counts .top bytes by width" {
     try std.testing.expectEqual(@as(usize, 4), neededBytesFromGlobals(globals));
 }
 
-test "neededBytesFromGlobals counts .values/.pointers as 1 byte" {
+test "neededBytesFromGlobals counts multi-candidate .values/.pointers as 1 byte each" {
+    const fields: []const ir.Field = &.{
+        .{
+            .name = ".a",
+            .bit_width = 32,
+            .is_padding = false,
+            .domain = .{ .values = &.{ "0xAA", "0xBB" } },
+        },
+        .{
+            .name = ".b",
+            .bit_width = 64,
+            .is_padding = false,
+            .domain = .{ .pointers = &.{ "func", "other" } },
+        },
+    };
+    const globals: []const ir.Global = &.{.{
+        .name = "g",
+        .source_file = "",
+        .size_bytes = 12,
+        .is_static = false,
+        .dims = &.{},
+        .fields = @constCast(fields),
+    }};
+    try std.testing.expectEqual(@as(usize, 2), neededBytesFromGlobals(globals));
+}
+
+test "neededBytesFromGlobals singleton constrained domains use 0 selector bytes" {
     const fields: []const ir.Field = &.{
         .{
             .name = ".a",
@@ -107,7 +128,29 @@ test "neededBytesFromGlobals counts .values/.pointers as 1 byte" {
         .dims = &.{},
         .fields = @constCast(fields),
     }};
-    try std.testing.expectEqual(@as(usize, 2), neededBytesFromGlobals(globals));
+    try std.testing.expectEqual(@as(usize, 0), neededBytesFromGlobals(globals));
+}
+
+test "neededBytesFromGlobals whole_values counts selector and blob per global instance" {
+    const fields: []const ir.Field = &.{
+        .{
+            .name = ".buf",
+            .bit_width = 8,
+            .is_padding = false,
+            .dims = &.{.{ .len = 2, .stride_bytes = 1 }},
+            .domain = .{ .whole_values = &.{ &[_]u8{ 1, 2 }, &[_]u8{ 3, 4 } } },
+        },
+    };
+    const globals: []const ir.Global = &.{.{
+        .name = "g",
+        .source_file = "",
+        .size_bytes = 6,
+        .is_static = false,
+        .dims = &.{.{ .len = 3, .stride_bytes = 2 }},
+        .fields = @constCast(fields),
+    }};
+    // global_mult=3, per instance: 1 selector + 2 blob bytes => 3 * 3 = 9
+    try std.testing.expectEqual(@as(usize, 9), neededBytesFromGlobals(globals));
 }
 
 test "neededBytesFromGlobals multiplies by global and field dims" {

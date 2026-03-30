@@ -133,6 +133,65 @@ fn uniqueKey(alloc: std.mem.Allocator, name: []const u8, source_file: []const u8
     return name;
 }
 
+test "applyToGlobals accepts whole_values domain" {
+    const allocator = std.testing.allocator;
+
+    var globals = std.ArrayList(Parser.Global).empty;
+    defer Parser.freeGlobals(allocator, &globals);
+
+    const parser_dims = try allocator.alloc(ir.Dimension, 1);
+    parser_dims[0] = .{ .len = 1, .stride_bytes = 2 };
+
+    const global_fields = try allocator.alloc(Parser.Field, 1);
+    global_fields[0] = .{
+        .name = try allocator.dupe(u8, "."),
+        .bit_width = 16,
+        .is_padding = false,
+        .dims = parser_dims,
+        .domain = .top,
+    };
+
+    try globals.append(allocator, .{
+        .name = try allocator.dupe(u8, "g"),
+        .source_file = try allocator.dupe(u8, ""),
+        .size_bytes = 2,
+        .is_static = false,
+        .dims = &.{},
+        .fields = global_fields,
+    });
+
+    var inv_arena = std.heap.ArenaAllocator.init(allocator);
+    const inv_alloc = inv_arena.allocator();
+    const inv_dims = try inv_alloc.alloc(ir.Dimension, 1);
+    inv_dims[0] = .{ .len = 1, .stride_bytes = 2 };
+    const inv_fields = try inv_alloc.alloc(ir.Field, 1);
+    inv_fields[0] = .{
+        .name = try inv_alloc.dupe(u8, "."),
+        .bit_width = 16,
+        .dims = inv_dims,
+        .domain = .{ .whole_values = &.{ &[_]u8{ 0xAA, 0xBB }, &[_]u8{ 0xCC, 0xDD } } },
+        .is_padding = false,
+    };
+    const inv_globals = try inv_alloc.alloc(ir.Global, 1);
+    inv_globals[0] = .{
+        .name = try inv_alloc.dupe(u8, "g"),
+        .source_file = try inv_alloc.dupe(u8, ""),
+        .size_bytes = 2,
+        .is_static = false,
+        .dims = &.{},
+        .fields = inv_fields,
+    };
+    var inv = Invariant{ .globals = inv_globals, .arena = inv_arena };
+    defer inv.deinit();
+
+    var apply_arena = std.heap.ArenaAllocator.init(allocator);
+    defer apply_arena.deinit();
+    const result = try inv.applyToGlobals(allocator, apply_arena.allocator(), globals);
+    defer allocator.free(result.func_symbols);
+    try std.testing.expect(globals.items[0].fields[0].domain == .whole_values);
+    try std.testing.expectEqual(@as(usize, 2), globals.items[0].fields[0].domain.whole_values.len);
+}
+
 test "applyToGlobals updates domains" {
     const allocator = std.testing.allocator;
 

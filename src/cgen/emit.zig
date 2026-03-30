@@ -126,6 +126,7 @@ fn emitDomainTables(globals: []const Parser.Global, file: *std.fs.File) !void {
     var num_buf: [64]u8 = undefined;
     var bytes_buf: [64]u8 = undefined;
     var value_idx: usize = 0;
+    var wval_idx: usize = 0;
     var ptr_idx: usize = 0;
 
     for (globals) |g| {
@@ -160,6 +161,32 @@ fn emitDomainTables(globals: []const Parser.Global, file: *std.fs.File) !void {
                     const bytes_def = try std.fmt.bufPrint(&num_buf, "#define {s}_BYTES {s}\n", .{ label, bytes_str });
                     try file.writeAll(bytes_def);
                 },
+                .whole_values => |vals| {
+                    if (vals.len == 0) continue;
+                    const blob_bytes = ir.wholeFieldBytes(f);
+                    const blob_str = try std.fmt.bufPrint(&bytes_buf, "{d}", .{blob_bytes});
+                    var label_buf: [64]u8 = undefined;
+                    const label = try std.fmt.bufPrint(&label_buf, "FM_WVAL_{d}", .{wval_idx});
+                    wval_idx += 1;
+
+                    try file.writeAll("static const uint8_t ");
+                    try file.writeAll(label);
+                    try file.writeAll("[] = { ");
+                    for (vals, 0..) |v, vi| {
+                        if (vi > 0) try file.writeAll(", ");
+                        for (0..blob_bytes) |bi| {
+                            if (bi > 0) try file.writeAll(", ");
+                            const byte_val: u8 = if (bi < v.len) v[bi] else 0;
+                            const byte_str = try std.fmt.bufPrint(&num_buf, "0x{X:0>2}", .{byte_val});
+                            try file.writeAll(byte_str);
+                        }
+                    }
+                    try file.writeAll(" };\n");
+                    const count_str = try std.fmt.bufPrint(&num_buf, "#define {s}_COUNT {d}\n", .{ label, vals.len });
+                    try file.writeAll(count_str);
+                    const bytes_def = try std.fmt.bufPrint(&num_buf, "#define {s}_BLOB_BYTES {s}\n", .{ label, blob_str });
+                    try file.writeAll(bytes_def);
+                },
                 .pointers => |ptrs| {
                     if (ptrs.len == 0) continue;
                     var ptr_label_buf: [64]u8 = undefined;
@@ -182,7 +209,7 @@ fn emitDomainTables(globals: []const Parser.Global, file: *std.fs.File) !void {
         }
     }
 
-    if (value_idx > 0 or ptr_idx > 0) try file.writeAll("\n");
+    if (value_idx > 0 or wval_idx > 0 or ptr_idx > 0) try file.writeAll("\n");
 }
 
 /// Generate the complete fuzzer C file and `objcopy` redefinition file.
@@ -267,6 +294,7 @@ fn emitSampler(allocator: std.mem.Allocator, globals: []const Parser.Global, fil
     var bytes_buf: [64]u8 = undefined;
 
     var value_idx: usize = 0;
+    var wval_idx: usize = 0;
     var ptr_idx: usize = 0;
     try file.writeAll("ptrdiff_t sample_invariant(const uint8_t *data, size_t size) {\n");
     try file.writeAll("    size_t off = 0;\n");
@@ -304,6 +332,41 @@ fn emitSampler(allocator: std.mem.Allocator, globals: []const Parser.Global, fil
 
             const field_dims_len = f.dims.len;
 
+            if (f.domain == .whole_values) {
+                const vals = f.domain.whole_values;
+                if (vals.len == 0) continue;
+
+                const offset_expr = try emitOffsetCalc(allocator, g.dims, &.{}, @intCast(f.offset_bits / 8));
+                defer allocator.free(offset_expr);
+                const dst_expr = try std.fmt.allocPrint(allocator, "&{s}[{s}]", .{ mangled, offset_expr });
+                defer allocator.free(dst_expr);
+                const blob_str = try std.fmt.bufPrint(&bytes_buf, "{d}", .{ir.wholeFieldBytes(f)});
+
+                const current_depth = loop_stack.depth();
+                var label_buf: [64]u8 = undefined;
+                const label = try std.fmt.bufPrint(&label_buf, "FM_WVAL_{d}", .{wval_idx});
+                wval_idx += 1;
+
+                if (vals.len > 1) {
+                    try writeIndent(file, current_depth);
+                    try file.writeAll("size_t idx_");
+                    try file.writeAll(label);
+                    try file.writeAll(" = data[off] % ");
+                    const count_str = try std.fmt.bufPrint(&num_buf, "{d}", .{vals.len});
+                    try file.writeAll(count_str);
+                    try file.writeAll(";\n");
+                    var src_buf: [256]u8 = undefined;
+                    const src = try std.fmt.bufPrint(&src_buf, "&{s}[idx_{s} * {s}_BLOB_BYTES]", .{ label, label, label });
+                    try emitMemcpy(file, current_depth, dst_expr, src, blob_str);
+                    try incrementOffset(file, current_depth, "1");
+                } else {
+                    var src_buf: [256]u8 = undefined;
+                    const src = try std.fmt.bufPrint(&src_buf, "&{s}[0]", .{label});
+                    try emitMemcpy(file, current_depth, dst_expr, src, blob_str);
+                }
+                continue;
+            }
+
             // Open field loops (if any) inside the global loops.
             for (f.dims, 0..) |d, fi| {
                 const i = global_dims_len + fi;
@@ -315,8 +378,6 @@ fn emitSampler(allocator: std.mem.Allocator, globals: []const Parser.Global, fil
             );
             defer allocator.free(offset_expr);
 
-            // Access: &mangled[offset_expr]
-            // Wait, offset_expr might be long. We should allocate.
             const dst_expr = try std.fmt.allocPrint(allocator, "&{s}[{s}]", .{ mangled, offset_expr });
             defer allocator.free(dst_expr);
 
@@ -327,42 +388,61 @@ fn emitSampler(allocator: std.mem.Allocator, globals: []const Parser.Global, fil
                     try incrementOffset(file, current_depth, bytes_str);
                 },
                 .values => |vals| {
-                    if (vals.len == 0) continue;
+                    if (vals.len == 0) {
+                        try loop_stack.closeLoops(field_dims_len);
+                        continue;
+                    }
                     var label_buf: [64]u8 = undefined;
                     const label = try std.fmt.bufPrint(&label_buf, "FM_VAL_{d}", .{value_idx});
                     value_idx += 1;
 
-                    try writeIndent(file, current_depth);
-                    try file.writeAll("size_t idx_");
-                    try file.writeAll(label);
-                    try file.writeAll(" = data[off] % ");
-                    const count_str = try std.fmt.bufPrint(&num_buf, "{d}", .{vals.len});
-                    try file.writeAll(count_str);
-                    try file.writeAll(";\n");
+                    if (vals.len > 1) {
+                        try writeIndent(file, current_depth);
+                        try file.writeAll("size_t idx_");
+                        try file.writeAll(label);
+                        try file.writeAll(" = data[off] % ");
+                        const count_str = try std.fmt.bufPrint(&num_buf, "{d}", .{vals.len});
+                        try file.writeAll(count_str);
+                        try file.writeAll(";\n");
 
-                    var src_buf: [256]u8 = undefined;
-                    const src = try std.fmt.bufPrint(&src_buf, "&{s}[idx_{s} * {s}]", .{ label, label, bytes_str });
-                    try emitMemcpy(file, current_depth, dst_expr, src, bytes_str);
-                    try incrementOffset(file, current_depth, "1");
+                        var src_buf: [256]u8 = undefined;
+                        const src = try std.fmt.bufPrint(&src_buf, "&{s}[idx_{s} * {s}]", .{ label, label, bytes_str });
+                        try emitMemcpy(file, current_depth, dst_expr, src, bytes_str);
+                        try incrementOffset(file, current_depth, "1");
+                    } else {
+                        var src_buf: [256]u8 = undefined;
+                        const src = try std.fmt.bufPrint(&src_buf, "&{s}[0]", .{label});
+                        try emitMemcpy(file, current_depth, dst_expr, src, bytes_str);
+                    }
                 },
+                .whole_values => unreachable,
                 .pointers => |ptrs| {
-                    if (ptrs.len == 0) continue;
+                    if (ptrs.len == 0) {
+                        try loop_stack.closeLoops(field_dims_len);
+                        continue;
+                    }
                     var ptr_label_buf: [64]u8 = undefined;
                     const ptr_label = try std.fmt.bufPrint(&ptr_label_buf, "FM_PTR_{d}", .{ptr_idx});
                     ptr_idx += 1;
 
-                    try writeIndent(file, current_depth);
-                    try file.writeAll("size_t idx_");
-                    try file.writeAll(ptr_label);
-                    try file.writeAll(" = data[off] % ");
-                    const count_str = try std.fmt.bufPrint(&num_buf, "{d}", .{ptrs.len});
-                    try file.writeAll(count_str);
-                    try file.writeAll(";\n");
+                    if (ptrs.len > 1) {
+                        try writeIndent(file, current_depth);
+                        try file.writeAll("size_t idx_");
+                        try file.writeAll(ptr_label);
+                        try file.writeAll(" = data[off] % ");
+                        const count_str = try std.fmt.bufPrint(&num_buf, "{d}", .{ptrs.len});
+                        try file.writeAll(count_str);
+                        try file.writeAll(";\n");
 
-                    var src_buf: [128]u8 = undefined;
-                    const src = try std.fmt.bufPrint(&src_buf, "&{s}[idx_{s}]", .{ ptr_label, ptr_label });
-                    try emitMemcpy(file, current_depth, dst_expr, src, bytes_str);
-                    try incrementOffset(file, current_depth, "1");
+                        var src_buf: [128]u8 = undefined;
+                        const src = try std.fmt.bufPrint(&src_buf, "&{s}[idx_{s}]", .{ ptr_label, ptr_label });
+                        try emitMemcpy(file, current_depth, dst_expr, src, bytes_str);
+                        try incrementOffset(file, current_depth, "1");
+                    } else {
+                        var src_buf: [128]u8 = undefined;
+                        const src = try std.fmt.bufPrint(&src_buf, "&{s}[0]", .{ptr_label});
+                        try emitMemcpy(file, current_depth, dst_expr, src, bytes_str);
+                    }
                 },
             }
 
@@ -382,6 +462,7 @@ fn emitSampler(allocator: std.mem.Allocator, globals: []const Parser.Global, fil
 fn emitChecker(allocator: std.mem.Allocator, globals: []const Parser.Global, file: *std.fs.File) !void {
     var bytes_buf: [64]u8 = undefined;
     var value_idx: usize = 0;
+    var wval_idx: usize = 0;
     var ptr_idx: usize = 0;
 
     try file.writeAll("int check_invariant(void) {\n");
@@ -406,25 +487,18 @@ fn emitChecker(allocator: std.mem.Allocator, globals: []const Parser.Global, fil
             const bytes_str = try std.fmt.bufPrint(&bytes_buf, "{d}", .{bytes});
             const field_dims_len = f.dims.len;
 
-            // Open field loops (if any) inside the global loops.
-            for (f.dims, 0..) |d, fi| {
-                const i = global_dims_len + fi;
-                try loop_stack.openLoop(d, i);
-            }
-
-            const current_depth = loop_stack.depth();
-
             // Skip byte-unaligned regions (bitfields can produce these).
-            if (f.offset_bits % 8 != 0) {
-                try loop_stack.closeLoops(field_dims_len);
-                continue;
-            }
-
-            const offset_expr = try emitOffsetCalc(allocator, g.dims, f.dims, @intCast(f.offset_bits / 8));
-            defer allocator.free(offset_expr);
+            if (f.offset_bits % 8 != 0) continue;
 
             if (f.is_padding) {
-                // Padding must stay zeroed.
+                for (f.dims, 0..) |d, fi| {
+                    const i = global_dims_len + fi;
+                    try loop_stack.openLoop(d, i);
+                }
+                const current_depth = loop_stack.depth();
+                const offset_expr = try emitOffsetCalc(allocator, g.dims, f.dims, @intCast(f.offset_bits / 8));
+                defer allocator.free(offset_expr);
+
                 try writeIndent(file, current_depth);
                 try file.writeAll("for (size_t i = 0; i < ");
                 try file.writeAll(bytes_str);
@@ -437,8 +511,65 @@ fn emitChecker(allocator: std.mem.Allocator, globals: []const Parser.Global, fil
                 try file.writeAll(" + i] != 0) return -1;\n");
                 try writeIndent(file, current_depth);
                 try file.writeAll("}\n");
-            } else switch (f.domain) {
+
+                try loop_stack.closeLoops(field_dims_len);
+                continue;
+            }
+
+            if (f.domain == .whole_values) {
+                const vals = f.domain.whole_values;
+                if (vals.len == 0) continue;
+
+                const offset_expr = try emitOffsetCalc(allocator, g.dims, &.{}, @intCast(f.offset_bits / 8));
+                defer allocator.free(offset_expr);
+                const current_depth = loop_stack.depth();
+
+                var label_buf: [64]u8 = undefined;
+                const label = try std.fmt.bufPrint(&label_buf, "FM_WVAL_{d}", .{wval_idx});
+                wval_idx += 1;
+
+                try writeIndent(file, current_depth);
+                try file.writeAll("{\n");
+                try writeIndent(file, current_depth + 1);
+                try file.writeAll("int found = 0;\n");
+                try writeIndent(file, current_depth + 1);
+                try file.writeAll("for (size_t vi = 0; vi < ");
+                try file.writeAll(label);
+                try file.writeAll("_COUNT; vi++) {\n");
+                try writeIndent(file, current_depth + 2);
+                try file.writeAll("if (memcmp(&");
+                try file.writeAll(mangled);
+                try file.writeAll("[");
+                try file.writeAll(offset_expr);
+                try file.writeAll("], &");
+                try file.writeAll(label);
+                try file.writeAll("[vi * ");
+                try file.writeAll(label);
+                try file.writeAll("_BLOB_BYTES], ");
+                try file.writeAll(label);
+                try file.writeAll("_BLOB_BYTES) == 0) { found = 1; break; }\n");
+                try writeIndent(file, current_depth + 1);
+                try file.writeAll("}\n");
+                try writeIndent(file, current_depth + 1);
+                try file.writeAll("if (!found) return -1;\n");
+                try writeIndent(file, current_depth);
+                try file.writeAll("}\n");
+                continue;
+            }
+
+            // Open field loops (if any) inside the global loops.
+            for (f.dims, 0..) |d, fi| {
+                const i = global_dims_len + fi;
+                try loop_stack.openLoop(d, i);
+            }
+
+            const current_depth = loop_stack.depth();
+            const offset_expr = try emitOffsetCalc(allocator, g.dims, f.dims, @intCast(f.offset_bits / 8));
+            defer allocator.free(offset_expr);
+
+            switch (f.domain) {
                 .top => {},
+                .whole_values => unreachable,
                 .values => |vals| {
                     if (vals.len == 0) {
                         try loop_stack.closeLoops(field_dims_len);
@@ -827,7 +958,8 @@ test "emitSampler with .pointers domain" {
     try emitSampler(alloc, globals, &file);
     var buf: [4096]u8 = undefined;
     const out = try readTmpFile(&tmp, "t.c", &buf);
-    try std.testing.expect(std.mem.indexOf(u8, out, "idx_FM_PTR_0 = data[off] % 1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "&FM_PTR_0[0]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "idx_FM_PTR_0") == null);
 }
 
 test "emitSampler skips padding fields" {

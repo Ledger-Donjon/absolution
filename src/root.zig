@@ -9,6 +9,7 @@ pub const Parser = @import("Parser.zig");
 pub const seed = @import("seed.zig");
 pub const Invariant = @import("Invariant.zig");
 pub const emit = @import("cgen/emit.zig");
+pub const ir = @import("cgen/ir.zig");
 
 test {
     _ = @import("Invariant.zig");
