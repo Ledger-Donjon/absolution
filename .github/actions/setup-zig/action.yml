@@ -5,9 +5,59 @@ description: Install the Zig version specified in build.zig.zon
 runs:
   using: composite
   steps:
-    - shell: bash
+    - name: Install minisign
+      shell: bash
       run: |
         set -euo pipefail
+
+        case "$RUNNER_OS" in
+          Linux) os=linux ;;
+          macOS) os=macos ;;
+          *) echo "Unsupported OS: $RUNNER_OS" >&2; exit 1 ;;
+        esac
+
+        case "$RUNNER_ARCH" in
+          X64)   arch=x86_64  ;;
+          ARM64) arch=aarch64 ;;
+          *) echo "Unsupported arch: $RUNNER_ARCH" >&2; exit 1 ;;
+        esac
+
+        # Linux release is a tar.gz with minisign-linux/{x86_64,aarch64}/minisign.
+        # macOS release is a zip with a universal binary at the root.
+        minisign_ver="0.12"
+        minisign_base="https://github.com/jedisct1/minisign/releases/download/${minisign_ver}"
+        dest="${RUNNER_TOOL_CACHE:-$HOME/.cache}/minisign"
+        mkdir -p "$dest"
+
+        case "$os" in
+          linux)
+            tmpdir=$(mktemp -d)
+            curl -sSfL "${minisign_base}/minisign-${minisign_ver}-linux.tar.gz" \
+              | tar -xz -C "$tmpdir"
+            cp "${tmpdir}/minisign-linux/${arch}/minisign" "${dest}/minisign"
+            rm -rf "$tmpdir"
+            ;;
+          macos)
+            tmpdir=$(mktemp -d)
+            curl -sSfL -o "${tmpdir}/minisign-macos.zip" \
+              "${minisign_base}/minisign-${minisign_ver}-macos.zip"
+            python3 -c "
+        import zipfile
+        zipfile.ZipFile('${tmpdir}/minisign-macos.zip').extract('minisign', '${dest}')
+        "
+            rm -rf "$tmpdir"
+            ;;
+        esac
+        chmod +x "${dest}/minisign"
+
+        echo "${dest}" >> "$GITHUB_PATH"
+
+    - name: Install Zig
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        ZIG_MINISIGN_PUBKEY="RWSGOq2NVecA2UPNdBUZykf1CCb147pkmdtYxgb3Ti+JO/wCYvhbAb/U"
 
         # build.zig.zon may come from an untrusted PR checkout; only accept a plain semver triple.
         version=$(grep -m1 'minimum_zig_version' build.zig.zon | sed 's/.*"\(.*\)".*/\1/')
@@ -28,12 +78,23 @@ runs:
           *) echo "Unsupported arch: $RUNNER_ARCH" >&2; exit 1 ;;
         esac
 
-        url="https://ziglang.org/download/${version}/zig-${arch}-${os}-${version}.tar.xz"
+        tarball="zig-${arch}-${os}-${version}.tar.xz"
+        url="https://ziglang.org/download/${version}/${tarball}"
         echo "Installing Zig ${version} from ${url}"
 
         install_dir="${RUNNER_TOOL_CACHE:-$HOME/.cache}/zig"
         mkdir -p "$install_dir"
-        curl -sSfL "$url" | tar -xJ -C "$install_dir"
+
+        tmpdir=$(mktemp -d)
+        trap 'rm -rf "$tmpdir"' EXIT
+
+        curl -sSfL -o "${tmpdir}/${tarball}" "$url"
+        curl -sSfL -o "${tmpdir}/${tarball}.minisig" "${url}.minisig"
+
+        echo "Verifying minisign signature..."
+        minisign -Vm "${tmpdir}/${tarball}" -P "$ZIG_MINISIGN_PUBKEY"
+
+        tar -xJ -C "$install_dir" -f "${tmpdir}/${tarball}"
 
         # Tarball top-level dir is zig-<arch>-<os>-<version>
         zig_dir="${install_dir}/zig-${arch}-${os}-${version}"
