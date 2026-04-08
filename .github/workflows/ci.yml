@@ -39,5 +39,4 @@ jobs:
           path: _actions
       - uses: ./_actions/.github/actions/setup-zig
       - run: zig build -Doptimize=${{ matrix.optimize }}
-      - uses: astral-sh/setup-uv@6ee6290f1cbc4156c0bdd66691b2c144ef8df19a # v7.4.0
-      - run: uv run scripts/integration.py
+      - run: zig run scripts/integration.zig  
