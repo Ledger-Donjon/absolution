@@ -1,0 +1,18 @@
+.{.{
+    .name = "pkt",
+    .source_file = "tests/whole_field_strided_struct_member/target.c",
+    .size_bytes = 16,
+    .is_static = false,
+    .dims = .{},
+    .fields = .{.{
+        .name = ".items.b",
+        .offset_bits = 0,
+        .bit_width = 8,
+        .dims = .{.{ .len = 4, .stride_bytes = 4 }},
+        .is_padding = false,
+        .domain = .{ .whole_values = .{
+            "\x10\x20\x30\x40",
+            "\xa0\xb0\xc0\xd0",
+        } },
+    }},
+}}
