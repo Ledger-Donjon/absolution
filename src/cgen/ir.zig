@@ -41,6 +41,21 @@ pub fn wholeFieldBytes(f: Field) usize {
     return elementBytes(f) * dimsProduct(f.dims);
 }
 
+/// True when the field's array elements are packed without gaps, so a single
+/// contiguous memcpy/memcmp over `wholeFieldBytes` is correct.  False when
+/// stride > element size (e.g. a member inside an array-of-structs with padding).
+pub fn isWholeFieldDense(f: Field) bool {
+    if (f.dims.len == 0) return true;
+    var expected_stride: usize = elementBytes(f);
+    var i: usize = f.dims.len;
+    while (i > 0) {
+        i -= 1;
+        if (f.dims[i].stride_bytes != expected_stride) return false;
+        expected_stride *= f.dims[i].len;
+    }
+    return true;
+}
+
 /// For constrained domains: 0 bytes when there is at most one candidate, else 1 selector byte.
 pub fn constrainedSelectorBytes(domain: Domain) usize {
     return switch (domain) {
@@ -270,6 +285,53 @@ test "validateFieldDomain whole_values checks blob length" {
         .domain = .{ .whole_values = &.{&[_]u8{1}} },
     };
     try std.testing.expectError(error.WholeValuesBlobMismatch, validateFieldDomain(f_bad));
+}
+
+test "isWholeFieldDense scalar" {
+    const f: Field = .{ .name = ".x", .bit_width = 32 };
+    try std.testing.expect(isWholeFieldDense(f));
+}
+
+test "isWholeFieldDense dense 1D" {
+    const f: Field = .{
+        .name = ".b",
+        .bit_width = 8,
+        .dims = &.{.{ .len = 4, .stride_bytes = 1 }},
+    };
+    try std.testing.expect(isWholeFieldDense(f));
+}
+
+test "isWholeFieldDense strided 1D" {
+    const f: Field = .{
+        .name = ".b",
+        .bit_width = 8,
+        .dims = &.{.{ .len = 4, .stride_bytes = 4 }},
+    };
+    try std.testing.expect(!isWholeFieldDense(f));
+}
+
+test "isWholeFieldDense dense 2D" {
+    const f: Field = .{
+        .name = ".b",
+        .bit_width = 8,
+        .dims = &.{
+            .{ .len = 3, .stride_bytes = 4 },
+            .{ .len = 4, .stride_bytes = 1 },
+        },
+    };
+    try std.testing.expect(isWholeFieldDense(f));
+}
+
+test "isWholeFieldDense strided 2D" {
+    const f: Field = .{
+        .name = ".b",
+        .bit_width = 8,
+        .dims = &.{
+            .{ .len = 3, .stride_bytes = 8 },
+            .{ .len = 4, .stride_bytes = 1 },
+        },
+    };
+    try std.testing.expect(!isWholeFieldDense(f));
 }
 
 test "constrainedSelectorBytes" {
