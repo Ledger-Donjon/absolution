@@ -4,6 +4,14 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const strip = b.option(bool, "strip", "Strip debug info from the binary");
+    const version_str = b.option(
+        []const u8,
+        "version",
+        "Version string embedded in the binary (shown in --help)",
+    ) orelse "dev";
+
+    const build_options = b.addOptions();
+    build_options.addOption([]const u8, "version", version_str);
 
     const aro_dep = b.dependency("aro", .{
         .target = target,
@@ -36,6 +44,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
+    exe.root_module.addOptions("build_options", build_options);
 
     b.installArtifact(exe);
     install_zig_cc_sysroot_headers(b);

@@ -6,6 +6,7 @@
 const builtin = @import("builtin");
 const std = @import("std");
 const clap = @import("clap");
+const build_options = @import("build_options");
 const absolution = @import("absolution");
 const Invariant = absolution.Invariant;
 const Global = absolution.Parser.Global;
@@ -107,8 +108,16 @@ const help_opts: clap.HelpOptions = .{
 };
 
 fn printHelpAndFail(stream: std.fs.File) !Options {
-    try clap.helpToFile(stream, clap.Help, &cli, help_opts);
+    try printHelp(stream);
     return error.InvalidArgs;
+}
+
+fn printHelp(stream: std.fs.File) !void {
+    var banner_buf: [256]u8 = undefined;
+    var w = stream.writer(&banner_buf);
+    try w.interface.print("absolution @{s}\n\n", .{build_options.version});
+    try w.interface.flush();
+    try clap.helpToFile(stream, clap.Help, &cli, help_opts);
 }
 
 fn parseArgs(allocator: std.mem.Allocator) !Options {
