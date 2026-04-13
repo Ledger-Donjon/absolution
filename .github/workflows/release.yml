@@ -27,7 +27,7 @@ jobs:
         with:
           ref: ${{ inputs.release_tag }}
       - uses: Ledger-Donjon/absolution/.github/actions/setup-zig@main
-      - run: zig build -Doptimize=${{ matrix.optimize }} -Dstrip=true
+      - run: zig build -Doptimize=${{ matrix.optimize }} -Dstrip=true -Dversion="${RELEASE_TAG}"
       - name: Upload tarball
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f #v7.0.0
         with:
