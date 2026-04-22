@@ -23,19 +23,19 @@ pub fn neededBytesFromGlobals(globals: []const ir.Global) usize {
     return total;
 }
 
-// Write a file the size given, no garantee on the content is given
-pub fn writeSeed(path: []const u8, size: usize) !void {
-    var file = try std.fs.cwd().createFile(path, .{ .truncate = true });
-    defer file.close();
+// Write a file the size given, no guarantee on the content is given
+pub fn writeSeed(io: std.Io, path: []const u8, size: usize) !void {
+    var file = try std.Io.Dir.cwd().createFile(io, path, .{ .truncate = true });
+    defer file.close(io);
 
     const chunk_size = 4096;
-    // we use undefine memory as the seed content does not matter
+    // we use undefined memory since the seed content does not matter.
     const chunk: [chunk_size]u8 = undefined;
 
     var remaining = size;
     while (remaining > 0) {
         const n = @min(remaining, chunk_size);
-        try file.writeAll(chunk[0..n]);
+        try file.writeStreamingAll(io, chunk[0..n]);
         remaining -= n;
     }
 }
@@ -198,38 +198,38 @@ test "neededBytesFromGlobals multiplies by global and field dims" {
 test "writeSeed creates file with exact size" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const path = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const path = try std.fs.path.join(std.testing.allocator, &.{ ".zig-cache", "tmp", &tmp.sub_path });
     defer std.testing.allocator.free(path);
     const full = try std.fs.path.join(std.testing.allocator, &.{ path, "seed.bin" });
     defer std.testing.allocator.free(full);
 
-    try writeSeed(full, 100);
-    const stat = try tmp.dir.statFile("seed.bin");
+    try writeSeed(std.testing.io, full, 100);
+    const stat = try tmp.dir.statFile(std.testing.io, "seed.bin", .{});
     try std.testing.expectEqual(@as(u64, 100), stat.size);
 }
 
 test "writeSeed creates empty file for size 0" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const path = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const path = try std.fs.path.join(std.testing.allocator, &.{ ".zig-cache", "tmp", &tmp.sub_path });
     defer std.testing.allocator.free(path);
     const full = try std.fs.path.join(std.testing.allocator, &.{ path, "empty.bin" });
     defer std.testing.allocator.free(full);
 
-    try writeSeed(full, 0);
-    const stat = try tmp.dir.statFile("empty.bin");
+    try writeSeed(std.testing.io, full, 0);
+    const stat = try tmp.dir.statFile(std.testing.io, "empty.bin", .{});
     try std.testing.expectEqual(@as(u64, 0), stat.size);
 }
 
 test "writeSeed handles size larger than chunk" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const path = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const path = try std.fs.path.join(std.testing.allocator, &.{ ".zig-cache", "tmp", &tmp.sub_path });
     defer std.testing.allocator.free(path);
     const full = try std.fs.path.join(std.testing.allocator, &.{ path, "big.bin" });
     defer std.testing.allocator.free(full);
 
-    try writeSeed(full, 5000);
-    const stat = try tmp.dir.statFile("big.bin");
+    try writeSeed(std.testing.io, full, 5000);
+    const stat = try tmp.dir.statFile(std.testing.io, "big.bin", .{});
     try std.testing.expectEqual(@as(u64, 5000), stat.size);
 }

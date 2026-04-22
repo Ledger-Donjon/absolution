@@ -18,7 +18,7 @@ const root_prefix = ".";
 
 /// Tracks array dimensions along with their positions in the field path.
 const DimStack = struct {
-    dims: Dimensions = .{},
+    dims: Dimensions = .empty,
 
     fn deinit(self: *DimStack, allocator: std.mem.Allocator) void {
         self.dims.deinit(allocator);
@@ -43,7 +43,7 @@ pub fn peelTopLevelArrayDims(
     tree: aro.Tree,
     qt: aro.QualType,
 ) ParseError!struct { qt: aro.QualType, dims: []const ir.Dimension } {
-    var dims_list = Dimensions{};
+    var dims_list: Dimensions = .empty;
     errdefer dims_list.deinit(allocator);
     var current = qt;
 
@@ -308,7 +308,7 @@ fn freeField(alloc: std.mem.Allocator, f: *ir.Field) void {
 
 test "addPadding creates correct padding field" {
     const alloc = std.testing.allocator;
-    var fields = Fields{};
+    var fields: Fields = .empty;
     defer {
         for (fields.items) |*f| freeField(alloc, f);
         fields.deinit(alloc);
@@ -331,7 +331,7 @@ test "addPadding creates correct padding field" {
 
 test "addPadding with zero bits is no-op" {
     const alloc = std.testing.allocator;
-    var fields = Fields{};
+    var fields: Fields = .empty;
     defer fields.deinit(alloc);
     var ds = DimStack{};
     defer ds.deinit(alloc);
@@ -345,7 +345,7 @@ test "addPadding with zero bits is no-op" {
 
 test "addPadding increments pad_index" {
     const alloc = std.testing.allocator;
-    var fields = Fields{};
+    var fields: Fields = .empty;
     defer {
         for (fields.items) |*f| freeField(alloc, f);
         fields.deinit(alloc);

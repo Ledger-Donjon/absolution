@@ -21,41 +21,44 @@ pub fn addZigCcImplicitIncludes(comp: *aro.Compilation, resource_dir: []const u8
     const os = target.os.tag;
     const abi = target.abi;
 
+    var includes: std.ArrayList(aro.Compilation.Include) = .empty;
+    defer includes.deinit(comp.gpa);
+
     // 1. Zig's compiler-provided headers (stddef.h, stdarg.h, etc.)
     const zig_lib_include = try std.fs.path.join(comp.arena, &.{ resource_dir, "lib", "include" });
-    try comp.addSystemIncludeDir(zig_lib_include);
+    try includes.append(comp.gpa, .{ .kind = .system, .path = zig_lib_include });
 
     const libc_include_base = try std.fs.path.join(comp.arena, &.{ resource_dir, "lib", "libc", "include" });
 
     // 2. Target-specific libc headers (e.g., x86_64-linux-gnu or x86-linux-gnu)
-    //    Zig uses some naming quirks: x86_64 glibc targets use "x86-linux-gnu".
     const target_subdir = try getTargetLibcSubdir(comp.arena, arch, os, abi);
     if (target_subdir) |subdir| {
         const target_include = try std.fs.path.join(comp.arena, &.{ libc_include_base, subdir });
-        try comp.addSystemIncludeDir(target_include);
+        try includes.append(comp.gpa, .{ .kind = .system, .path = target_include });
     }
 
     // 3. Generic libc headers based on ABI family (glibc, musl, etc.)
     const generic_subdir = getGenericLibcSubdir(abi);
     if (generic_subdir) |subdir| {
         const generic_include = try std.fs.path.join(comp.arena, &.{ libc_include_base, subdir });
-        try comp.addSystemIncludeDir(generic_include);
+        try includes.append(comp.gpa, .{ .kind = .system, .path = generic_include });
     }
 
     // 4. Architecture + OS wildcard headers (e.g., x86-linux-any)
     const arch_os_any = try getArchOsAnySubdir(comp.arena, arch, os);
     if (arch_os_any) |subdir| {
         const arch_os_include = try std.fs.path.join(comp.arena, &.{ libc_include_base, subdir });
-        try comp.addSystemIncludeDir(arch_os_include);
+        try includes.append(comp.gpa, .{ .kind = .system, .path = arch_os_include });
     }
 
     // 5. OS-only wildcard headers (e.g., any-linux-any)
     const any_os_any = try getAnyOsAnySubdir(comp.arena, os);
     if (any_os_any) |subdir| {
         const any_os_include = try std.fs.path.join(comp.arena, &.{ libc_include_base, subdir });
-        try comp.addSystemIncludeDir(any_os_include);
+        try includes.append(comp.gpa, .{ .kind = .system, .path = any_os_include });
     }
 
+    try comp.initSearchPath(includes.items, false);
     // Note: We intentionally do NOT add /usr/local/include or /usr/include.
     // absolution is self-contained and uses only the bundled headers from the
     // build-time copied sysroot. This ensures:

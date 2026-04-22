@@ -15,18 +15,16 @@ arena: std.heap.ArenaAllocator,
 
 /// Load an invariant from a `.zon` file.
 /// All returned memory is owned by the caller through `Invariant`.
-pub fn init(gpa: std.mem.Allocator, path: []const u8) !Invariant {
+pub fn init(gpa: std.mem.Allocator, io: std.Io, path: []const u8) !Invariant {
     var arena: std.heap.ArenaAllocator = .init(gpa);
     errdefer arena.deinit();
-    // zon will allocate an array and elements in depths
-    // it is easier to destroy arena
     const zon_allocator = arena.allocator();
 
-    const bytes = try std.fs.cwd().readFileAllocOptions(
-        gpa,
+    const bytes = try std.Io.Dir.cwd().readFileAllocOptions(
+        io,
         path,
-        std.math.maxInt(usize),
-        null,
+        gpa,
+        .unlimited,
         std.mem.Alignment.@"8",
         0,
     );
@@ -35,7 +33,7 @@ pub fn init(gpa: std.mem.Allocator, path: []const u8) !Invariant {
     var diag: std.zon.parse.Diagnostics = .{};
     defer diag.deinit(zon_allocator);
 
-    const globals = try std.zon.parse.fromSlice(
+    const globals = try std.zon.parse.fromSliceAlloc(
         []ir.Global,
         zon_allocator,
         bytes,
@@ -487,13 +485,13 @@ test "init loads .zon invariant file" {
         \\    }},
         \\}}
     ;
-    try tmp.dir.writeFile(.{ .sub_path = "test.zon", .data = zon_content });
-    const dir_path = try tmp.dir.realpathAlloc(allocator, ".");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "test.zon", .data = zon_content });
+    const dir_path = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &tmp.sub_path });
     defer allocator.free(dir_path);
     const full_path = try std.fs.path.join(allocator, &.{ dir_path, "test.zon" });
     defer allocator.free(full_path);
 
-    var inv = try Invariant.init(allocator, full_path);
+    var inv = try Invariant.init(allocator, std.testing.io, full_path);
     defer inv.deinit();
 
     try std.testing.expectEqual(@as(usize, 1), inv.globals.len);

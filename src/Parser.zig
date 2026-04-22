@@ -28,14 +28,17 @@ gpa: std.mem.Allocator,
 arena: std.mem.Allocator,
 diagnostics: *aro.Diagnostics,
 toolchain: aro.Toolchain,
-computed_sources: [4]aro.Source = undefined,
+builtin_source: aro.Source = undefined,
+command_line_source: aro.Source = undefined,
+compat_source: aro.Source = undefined,
 
 /// Initialize the parser, discover the toolchain, and prime diagnostics.
 /// Args:
 ///   gpa: General-purpose allocator used for long-lived buffers.
 ///   arena: Short-lived arena used by aro internals.
+///   io: I/O interface for filesystem access.
 ///   cflags: C compiler flags forwarded to aro's driver (e.g. `-I`, `-D`, `-fshort-enums`).
-pub fn init(gpa: std.mem.Allocator, arena: std.mem.Allocator, cflags: []const []const u8) !Parser {
+pub fn init(gpa: std.mem.Allocator, arena: std.mem.Allocator, io: std.Io, cflags: []const []const u8) !Parser {
     // Initialize base fields in-place so self-references are valid from the start
     const diag = try gpa.create(aro.Diagnostics);
     diag.* = .{
@@ -46,13 +49,19 @@ pub fn init(gpa: std.mem.Allocator, arena: std.mem.Allocator, cflags: []const []
 
     // Create compilation with diagnostics pointing at final storage
     var comp = try gpa.create(aro.Compilation);
-    comp.* = try aro.Compilation.initDefault(gpa, arena, diag, std.fs.cwd());
+    comp.* = try aro.Compilation.init(.{
+        .gpa = gpa,
+        .arena = arena,
+        .io = io,
+        .diagnostics = diag,
+        .environ_map = null,
+    });
     errdefer quickDestroy(gpa, comp);
     // Use clang frontend defaults (same as zig cc).
     comp.langopts.setEmulatedCompiler(.clang);
 
     // Compute resource_dir relative to executable and store a duped copy
-    const exe_path = try std.fs.selfExePathAlloc(gpa);
+    const exe_path = try std.process.executablePathAlloc(io, gpa);
     defer gpa.free(exe_path);
     const exe_dir = std.fs.path.dirname(exe_path) orelse unreachable;
     const resource_dir = std.fs.path.dirname(exe_dir) orelse unreachable;
@@ -62,7 +71,7 @@ pub fn init(gpa: std.mem.Allocator, arena: std.mem.Allocator, cflags: []const []
     var driver = try gpa.create(aro.Driver);
     driver.* = .{ .comp = comp, .aro_name = "absolution", .diagnostics = diag, .resource_dir = resource_dir_dupe };
     errdefer quickDestroy(gpa, driver);
-    var toolchain: aro.Toolchain = .{ .driver = driver, .filesystem = .{ .fake = &.{} } };
+    var toolchain: aro.Toolchain = .{ .driver = driver };
     errdefer toolchain.deinit();
     try toolchain.discover();
 
@@ -80,7 +89,6 @@ pub fn init(gpa: std.mem.Allocator, arena: std.mem.Allocator, cflags: []const []
     // Clang module. Aro doesn't support Clang modules, so we define it to always return 0.
     // This is required for Zig 0.15.2+ which ships LLVM 18+ headers that use this macro.
     const compat_source = try driver.comp.addSourceFromBuffer("<compat>",
-        \\// Compatibility macros for LLVM/Clang 18+ headers
         \\#define __building_module(x) 0
         \\
     );
@@ -88,14 +96,15 @@ pub fn init(gpa: std.mem.Allocator, arena: std.mem.Allocator, cflags: []const []
     // update the driver state
     const user_macros = try buildUserMacros(toolchain, cflags, gpa);
     const builtin_source = try driver.comp.generateBuiltinMacros(driver.system_defines);
-    const empty_main = try toolchain.driver.comp.addSourceFromBuffer("<absolution>", "\n");
 
     return .{
         .gpa = gpa,
         .arena = arena,
         .diagnostics = diag,
         .toolchain = toolchain,
-        .computed_sources = .{ empty_main, builtin_source, compat_source, user_macros },
+        .builtin_source = builtin_source,
+        .command_line_source = user_macros,
+        .compat_source = compat_source,
     };
 }
 
@@ -169,21 +178,35 @@ fn isEffectivelyConst(comp: *aro.Compilation, qt: aro.QualType) bool {
     return false;
 }
 
+fn addMainFromPaths(p: *Parser, paths: []const []const u8) !aro.Source {
+    var unity_buf: std.ArrayList(u8) = .empty;
+    defer unity_buf.deinit(p.gpa);
+    for (paths) |path| {
+        try unity_buf.appendSlice(p.gpa, "#include \"");
+        try unity_buf.appendSlice(p.gpa, path);
+        try unity_buf.appendSlice(p.gpa, "\"\n");
+    }
+    return p.toolchain.driver.comp.addSourceFromBuffer(
+        "<absolution-unity>",
+        try unity_buf.toOwnedSlice(p.gpa),
+    );
+}
+
 /// Collect globals from every target file.
 pub fn collectGlobals(p: *Parser, paths: []const []const u8) !std.ArrayList(Global) {
-    var source_list: std.ArrayList(aro.Source) = .empty;
-    defer source_list.deinit(p.gpa);
+    // Build a synthetic unity source that #include's all targets
+    const main_source = try addMainFromPaths(p, paths);
 
-    try source_list.appendSlice(p.gpa, &p.computed_sources);
-
-    for (paths) |path| {
-        const src = try p.toolchain.driver.comp.addSourceFromPath(path);
-        try source_list.append(p.gpa, src);
-    }
-
-    var pp = try aro.Preprocessor.initDefault(p.toolchain.driver.comp);
+    var pp = try aro.Preprocessor.init(p.toolchain.driver.comp, .{
+        .base_file = main_source.id,
+    });
     defer pp.deinit();
-    pp.preprocessSources(source_list.items) catch |err| {
+    pp.preprocessSources(.{
+        .main = main_source,
+        .builtin = p.builtin_source,
+        .command_line = p.command_line_source,
+        .implicit_includes = &.{p.compat_source},
+    }) catch |err| {
         printDiagnostics(p.toolchain.driver.comp);
         return err;
     };
@@ -272,11 +295,12 @@ fn isHeaderFile(path: []const u8) bool {
 
 /// Print accumulated aro diagnostics to stdout.
 fn printDiagnostics(comp: *aro.Compilation) void {
-    var stdout_buf: [1024]u8 = undefined;
-    var stdout = std.fs.File.stdout().writer(&stdout_buf);
-    defer _ = stdout.interface.flush() catch {};
     for (comp.diagnostics.output.to_list.messages.items) |msg| {
-        msg.write(&stdout.interface, .escape_codes, true) catch {};
+        if (msg.location) |loc| {
+            std.debug.print("{s}:{d}:{d}: {s}\n", .{ loc.path, loc.line_no, loc.col, msg.text });
+        } else {
+            std.debug.print("{s}\n", .{msg.text});
+        }
     }
 }
 
