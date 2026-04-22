@@ -62,7 +62,7 @@ runs:
         # build.zig.zon may come from an untrusted PR checkout; only accept a plain semver triple.
         version=$(grep -m1 'minimum_zig_version' build.zig.zon | sed 's/.*"\(.*\)".*/\1/')
         if [[ -z "${version}" ]] || [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-          echo "::error::minimum_zig_version must be a semver triple (e.g. 0.15.2)" >&2
+          echo "::error::minimum_zig_version must be a semver triple (e.g. 0.16.0)" >&2
           exit 1
         fi
 

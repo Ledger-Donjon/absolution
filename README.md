@@ -13,7 +13,7 @@ Absolution lets you specify an invariant for a program’s global state and fuzz
 
 ## Requirements
 
-- **Zig 0.15.2** (per `build.zig.zon`)
+- **Zig 0.16.0** (per `build.zig.zon`)
 - **C toolchain** with libFuzzer support (e.g., `clang -fsanitize=fuzzer`)
 - **objcopy** (GNU binutils or `llvm-objcopy`) — for static symbol redefinition
 

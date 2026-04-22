@@ -1,7 +1,7 @@
 # Usage Guide
 
 This guide covers the full workflow for using absolution to fuzz C programs with invariant-constrained global state.
-It assumes absolution is already built (`zig build`) or installed; see [README.md](README.md) for requirements (Zig 0.15.2, C toolchain with libFuzzer, objcopy).
+It assumes absolution is already built (`zig build`) or installed; see [README.md](README.md) for requirements (Zig 0.16.0, C toolchain with libFuzzer, objcopy).
 
 ## Overview
 
