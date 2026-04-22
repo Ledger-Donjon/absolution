@@ -2,15 +2,15 @@
     .name = .absolution,
     .version = "1.0.0",
     .fingerprint = 0x552b58a887ba4c67, // Changing this has security and trust implications.
-    .minimum_zig_version = "0.15.2",
+    .minimum_zig_version = "0.16.0",
     .dependencies = .{
         .clap = .{
-            .url = "https://github.com/Hejsil/zig-clap/archive/refs/tags/0.11.0.tar.gz",
-            .hash = "clap-0.11.0-oBajB-HnAQDPCKYzwF7rO3qDFwRcD39Q0DALlTSz5H7e",
+            .url = "https://github.com/Hejsil/zig-clap/archive/refs/tags/0.12.0.tar.gz",
+            .hash = "clap-0.12.0-oBajB7foAQDqlSwaSG5g0yq7xGbQARUsBk5T64gAOqP5",
         },
         .aro = .{
-            .url = "git+https://github.com/0pendev/arocc.git#patch/absolution",
-            .hash = "aro-0.0.0-JSD1QgjGJwBL69KhefByfs65F9tvNMQyZUSNSJ6use33",
+            .url = "git+https://github.com/0pendev/arocc.git?ref=fix/normalize_include_path#3ad92489f67880a8abfda834becb1ee3bfd461cd",
+            .hash = "aro-0.0.0-JSD1Qk3RNgBojOzTztXJ8O-jya-6o41uvMuEgS51Ibd6",
         },
     },
     .paths = .{

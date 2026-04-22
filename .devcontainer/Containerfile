@@ -9,4 +9,4 @@ USER code
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Update path for uv and zig from extension
-ENV PATH=${PATH}:/home/code/.local/bin:/home/code/.cursor-server/data/User/globalStorage/ziglang.vscode-zig/zig/x86_64-linux-0.15.2
+ENV PATH=${PATH}:/home/code/.local/bin:/home/code/.cursor-server/data/User/globalStorage/ziglang.vscode-zig/zig/x86_64-linux-0.16.0

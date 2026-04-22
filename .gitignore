@@ -8,3 +8,4 @@ legacy
 *fuzzer.o
 *fuzzer.seed
 *.pyc
+zig-pkg
