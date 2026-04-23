@@ -49,6 +49,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(exe);
     install_zig_cc_sysroot_headers(b);
     install_cmake_modules(b);
+    install_license_files(b);
 
     const run_step = b.step("run", "Run the app");
 
@@ -86,6 +87,12 @@ pub fn install_cmake_modules(b: *std.Build) void {
         .install_dir = .prefix,
         .install_subdir = "lib/cmake/Absolution",
     });
+}
+
+pub fn install_license_files(b: *std.Build) void {
+    for ([_][]const u8{ "LICENSE", "THIRD-PARTY-NOTICES" }) |name| {
+        b.installFile(name, name);
+    }
 }
 
 pub fn install_zig_cc_sysroot_headers(b: *std.Build) void {

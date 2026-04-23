@@ -1,0 +1,9 @@
+version = 1
+SPDX-PackageName = "absolution"
+SPDX-PackageSupplier = "LEDGER SAS <hello@ledger.fr>"
+SPDX-PackageDownloadLocation = "https://github.com/Ledger-Donjon/absolution"
+
+[[annotations]]
+path = "**"
+SPDX-FileCopyrightText = "2026 LEDGER SAS"
+SPDX-License-Identifier = "MIT"
