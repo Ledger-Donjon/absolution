@@ -25,6 +25,7 @@ const FieldsBuilder = std.ArrayListUnmanaged(Field);
 const Parser = @This();
 // Struct parameters
 gpa: std.mem.Allocator,
+io: std.Io,
 arena: std.mem.Allocator,
 diagnostics: *aro.Diagnostics,
 toolchain: aro.Toolchain,
@@ -99,6 +100,7 @@ pub fn init(gpa: std.mem.Allocator, arena: std.mem.Allocator, io: std.Io, cflags
 
     return .{
         .gpa = gpa,
+        .io = io,
         .arena = arena,
         .diagnostics = diag,
         .toolchain = toolchain,
@@ -207,7 +209,7 @@ pub fn collectGlobals(p: *Parser, paths: []const []const u8) !std.ArrayList(Glob
         .command_line = p.command_line_source,
         .implicit_includes = &.{p.compat_source},
     }) catch |err| {
-        printDiagnostics(p.toolchain.driver.comp);
+        printDiagnostics(p.io, p.toolchain.driver.comp);
         return err;
     };
 
@@ -293,14 +295,14 @@ fn isHeaderFile(path: []const u8) bool {
     return false;
 }
 
-/// Print accumulated aro diagnostics to stdout.
-fn printDiagnostics(comp: *aro.Compilation) void {
+fn printDiagnostics(io: std.Io, comp: *aro.Compilation) void {
+    var buf: [256]u8 = undefined;
+    const locked = io.lockStderr(&buf, .escape_codes) catch return;
+    defer io.unlockStderr();
+    const terminal = locked.terminal();
+
     for (comp.diagnostics.output.to_list.messages.items) |msg| {
-        if (msg.location) |loc| {
-            std.debug.print("{s}:{d}:{d}: {s}\n", .{ loc.path, loc.line_no, loc.col, msg.text });
-        } else {
-            std.debug.print("{s}\n", .{msg.text});
-        }
+        msg.write(terminal, comp.diagnostics.details) catch {};
     }
 }
 
