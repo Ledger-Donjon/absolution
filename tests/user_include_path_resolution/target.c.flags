@@ -1,0 +1,4 @@
+# Force the preprocessor to rely on a user-supplied include path: the
+# header `inner.h` only exists under tests/user_include_path_resolution/inc/.
+-I
+tests/user_include_path_resolution/inc
