@@ -82,8 +82,10 @@ pub fn init(gpa: std.mem.Allocator, arena: std.mem.Allocator, io: std.Io, cflags
     driver.nostdlibinc = true;
     driver.nobuiltininc = true;
 
-    // Configure include search order from the bundled sysroot.
-    try include_paths.addZigCcImplicitIncludes(driver.comp, resource_dir_dupe);
+    // Stage bundled-sysroot search paths in `driver.includes`; user `-I` flags
+    // from `parseArgs` will join the same list and a single `initSearchPath`
+    // call below commits them all.
+    try include_paths.addZigCcImplicitIncludes(driver, resource_dir_dupe);
 
     // Add compatibility macros for LLVM/Clang 18+ headers.
     // __building_module(x) is a Clang builtin that returns 0 unless building a specific
@@ -93,9 +95,11 @@ pub fn init(gpa: std.mem.Allocator, arena: std.mem.Allocator, io: std.Io, cflags
         \\#define __building_module(x) 0
         \\
     );
-    // We call buildUserMacros before generateBuiltinMacros as calling parseArgs will
-    // update the driver state
+    // buildUserMacros runs parseArgs, which appends user includes to
+    // `driver.includes` and updates driver state, so it must come before
+    // initSearchPath and generateBuiltinMacros.
     const user_macros = try buildUserMacros(toolchain, cflags, gpa);
+    try driver.comp.initSearchPath(driver.includes.items, driver.verbose_search_path);
     const builtin_source = try driver.comp.generateBuiltinMacros(driver.system_defines);
 
     return .{
@@ -146,8 +150,8 @@ pub fn deinit(p: *Parser) void {
     var diag: *aro.Diagnostics = p.diagnostics;
 
     p.toolchain.deinit();
-    comp.deinit();
     driver.deinit();
+    comp.deinit();
     diag.deinit();
 
     p.gpa.destroy(comp);
