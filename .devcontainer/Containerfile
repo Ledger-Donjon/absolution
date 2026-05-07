@@ -1,12 +1,10 @@
-FROM registry.opensuse.org/opensuse/tumbleweed:latest
+FROM registry.opensuse.org/opensuse/leap:16.0
 
-RUN zypper in --no-recommends -y binutils busybox-netcat cmake findutils gawk git lldb ninja rizin &&\
+RUN zypper in --no-recommends -y binutils cmake findutils gawk git lldb ninja &&\
     zypper clean --all &&\
     useradd code
 
 USER code
 
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Update path for uv and zig from extension
+# Update path for zig from extension
 ENV PATH=${PATH}:/home/code/.local/bin:/home/code/.cursor-server/data/User/globalStorage/ziglang.vscode-zig/zig/x86_64-linux-0.16.0
