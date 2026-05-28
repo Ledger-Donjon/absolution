@@ -9,7 +9,7 @@
             .hash = "clap-0.12.0-oBajB7foAQDqlSwaSG5g0yq7xGbQARUsBk5T64gAOqP5",
         },
         .aro = .{
-            .url = "git+https://github.com/0pendev/arocc.git?ref=fix/normalize_include_path#3ad92489f67880a8abfda834becb1ee3bfd461cd",
+            .url = "git+https://github.com/Ledger-Donjon/arocc.git?ref=fork/absolution#600d15a764b5804eed0b69409560e6e7027d2ca3",
             .hash = "aro-0.0.0-JSD1Qk3RNgBojOzTztXJ8O-jya-6o41uvMuEgS51Ibd6",
         },
     },
