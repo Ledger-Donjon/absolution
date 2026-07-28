@@ -6,20 +6,7 @@ const ir = @import("cgen/ir.zig");
 
 pub fn neededBytesFromGlobals(globals: []const ir.Global) usize {
     var total: usize = 0;
-    for (globals) |g| {
-        const global_mult = ir.dimsProduct(g.dims);
-        for (g.fields) |f| {
-            if (f.is_padding) continue;
-            const field_mult = ir.dimsProduct(f.dims);
-            const bytes: usize = switch (f.domain) {
-                .top => ir.elementBytes(f) * global_mult * field_mult,
-                .values, .pointers => ir.constrainedSelectorBytes(f.domain) * global_mult * field_mult,
-                // Blob bytes come from emitted domain tables, not from the fuzzer stream.
-                .whole_values => global_mult * ir.constrainedSelectorBytes(f.domain),
-            };
-            total += bytes;
-        }
-    }
+    for (globals) |g| total += ir.globalInputBytes(g);
     return total;
 }
 

@@ -1,0 +1,8 @@
+# absolution fuzzer input layout
+# global <offset> <bytes> <static:0|1> <offset_symbol> <name> <source_file>
+version 1
+globals_size 37
+global 0 16 0 absolution_offset_ctrl ctrl tests/exported_input_offsets/target.c
+global 16 5 0 absolution_offset_state state tests/exported_input_offsets/target.c
+global 21 8 0 absolution_offset_table table tests/exported_input_offsets/target.c
+global 29 8 1 absolution_offset_tests_exported_input_offsets_target_c_secret secret tests/exported_input_offsets/target.c

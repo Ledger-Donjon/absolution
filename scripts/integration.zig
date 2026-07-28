@@ -1,9 +1,10 @@
 //! Integration tests for absolution.
 //!
 //! Finds .c test files under tests/, builds absolution once, then for each test:
-//!   1. Runs absolution to produce .zon and fuzzer.c
+//!   1. Runs absolution to produce .zon, fuzzer.c and the input offsets sidecar
 //!   2. Compiles the generated fuzzer.c with `zig cc`
 //!   3. Compares the .zon output against a golden file
+//!   4. Compares the offsets sidecar against a golden file, when one exists
 //!
 //! Run with:  zig run scripts/integration.zig
 //!
@@ -107,6 +108,8 @@ const TestCase = struct {
     flags: []const []const u8 = &.{},
     targets: []const []const u8 = &.{},
     invariant_path: ?[]const u8 = null,
+    /// Golden input-layout sidecar; only compared when the fixture ships one.
+    offsets_golden_path: ?[]const u8 = null,
 };
 
 // -----------------------------------------------------------------------
@@ -205,6 +208,10 @@ fn discoverTests(arena: std.mem.Allocator, io: std.Io, cases: *std.ArrayList(Tes
         const inv_path = try std.fmt.allocPrint(arena, "{s}.in", .{c_path});
         const invariant_path: ?[]const u8 = if (fileExists(cwd, io, inv_path)) inv_path else null;
 
+        // .offsets sidecar (golden input layout)
+        const offsets_path = try std.fmt.allocPrint(arena, "{s}.offsets", .{c_path});
+        const offsets_golden_path: ?[]const u8 = if (fileExists(cwd, io, offsets_path)) offsets_path else null;
+
         try cases.append(arena, .{
             .c_path = c_path,
             .golden_path = golden_path,
@@ -213,6 +220,7 @@ fn discoverTests(arena: std.mem.Allocator, io: std.Io, cases: *std.ArrayList(Tes
             .flags = flags,
             .targets = targets,
             .invariant_path = invariant_path,
+            .offsets_golden_path = offsets_golden_path,
         });
     }
 }
@@ -234,6 +242,7 @@ fn runOneTest(
     const out_zon = try std.fmt.allocPrint(arena, "{s}/out.zon", .{test_dir});
     const out_fuzzer = try std.fmt.allocPrint(arena, "{s}/fuzzer.c", .{test_dir});
     const out_redef = try std.fmt.allocPrint(arena, "{s}/redef.txt", .{test_dir});
+    const out_offsets = try std.fmt.allocPrint(arena, "{s}/fuzzer.offsets", .{test_dir});
     const out_obj = try std.fmt.allocPrint(arena, "{s}/fuzzer.o", .{test_dir});
 
     // -- Build absolution argv --
@@ -245,7 +254,9 @@ fn runOneTest(
     if (tc.invariant_path) |inv| {
         try argv.appendSlice(arena, &.{ "-i", inv });
     }
-    try argv.appendSlice(arena, &.{ "--zon", out_zon, "--out", out_fuzzer, "--redef", out_redef });
+    // Offsets are always requested so every fixture also checks that the
+    // exported layout constants compile.
+    try argv.appendSlice(arena, &.{ "--zon", out_zon, "--out", out_fuzzer, "--redef", out_redef, "--offsets", out_offsets });
     if (tc.flags.len > 0) {
         try argv.append(arena, "--");
         try argv.appendSlice(arena, tc.flags);
@@ -267,6 +278,20 @@ fn runOneTest(
         std.debug.print("    Golden mismatch: expected {s}\n", .{tc.golden_path});
         std.debug.print("    Actual output:   {s}\n", .{out_zon});
         return error.GoldenMismatch;
+    }
+
+    // 4. Offsets golden comparison
+    if (tc.offsets_golden_path) |offsets_golden| {
+        const actual_offsets = try std.Io.Dir.cwd().readFileAlloc(io, out_offsets, gpa, .limited(10 * 1024 * 1024));
+        defer gpa.free(actual_offsets);
+        const expected_offsets = try std.Io.Dir.cwd().readFileAlloc(io, offsets_golden, gpa, .limited(10 * 1024 * 1024));
+        defer gpa.free(expected_offsets);
+
+        if (!std.mem.eql(u8, actual_offsets, expected_offsets)) {
+            std.debug.print("    Offsets mismatch: expected {s}\n", .{offsets_golden});
+            std.debug.print("    Actual output:    {s}\n", .{out_offsets});
+            return error.OffsetsMismatch;
+        }
     }
 }
 

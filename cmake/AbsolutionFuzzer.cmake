@@ -32,6 +32,10 @@
 #                           linked normally.
 #   SANITIZERS            — sanitizer list (default: fuzzer,address).
 #
+# Generated artifacts include an input layout export (fuzzer.offsets, plus
+# matching constants in the generated C) giving the byte offset of every sampled
+# global; see USAGE.md.
+#
 # Created targets:
 #   ${NAME}_objs      — OBJECT library containing compiled target sources.
 #   ${NAME}_generate  — Custom target that runs absolution CLI to produce artifacts.
@@ -42,6 +46,7 @@
 #   ${NAME}_SEED_FILE       — Path to the generated seed file.
 #   ${NAME}_FUZZER_C        — Path to the generated fuzzer.c file.
 #   ${NAME}_REDEF_FILE      — Path to the generated .redef file.
+#   ${NAME}_OFFSETS_FILE    — Path to the generated input layout sidecar.
 #   ${NAME}_GENERATE_TARGET — Name of the generate target.
 #   ${NAME}_REDEF_TARGET    — Name of the redef target.
 
@@ -180,6 +185,7 @@ function(absolution_add_fuzzer)
     set(_FUZZER_C      "${_FUZZ_DIR}/fuzzer.c")
     set(_REDEF_FILE    "${_FUZZ_DIR}/fuzzer.redef")
     set(_SEED_FILE     "${_FUZZ_DIR}/fuzzer.seed")
+    set(_OFFSETS_FILE  "${_FUZZ_DIR}/fuzzer.offsets")
     set(_OBJ_LIST      "${_FUZZ_DIR}/objfiles.txt")
     set(_FLAGS_FILE    "${_FUZZ_DIR}/absolution_flags.rsp")
     set(_TARGETS_FILE  "${_FUZZ_DIR}/absolution_targets.txt")
@@ -275,13 +281,14 @@ $<JOIN:$<TARGET_PROPERTY:${_OBJ_LIB},COMPILE_OPTIONS>,\n>
     set(_GENERATE_TARGET "${FUZZ_NAME}_generate")
 
     add_custom_command(
-        OUTPUT  "${_FUZZER_C}" "${_REDEF_FILE}" "${_SEED_FILE}"
+        OUTPUT  "${_FUZZER_C}" "${_REDEF_FILE}" "${_SEED_FILE}" "${_OFFSETS_FILE}"
         COMMAND "${CMAKE_COMMAND}"
             "-DABSOLUTION=${ABSOLUTION_EXECUTABLE}"
             "-DTARGETS_FILE=${_TARGETS_FILE}"
             "-DOUT_C=${_FUZZER_C}"
             "-DREDEF=${_REDEF_FILE}"
             "-DSEED=${_SEED_FILE}"
+            "-DOFFSETS=${_OFFSETS_FILE}"
             "-DENTRY=${FUZZ_ENTRY}"
             "-DINVARIANT=${_abs_inv}"
             "-DFLAGS_FILE=${_FLAGS_FILE}"
@@ -293,13 +300,14 @@ $<JOIN:$<TARGET_PROPERTY:${_OBJ_LIB},COMPILE_OPTIONS>,\n>
         VERBATIM
     )
     add_custom_target(${_GENERATE_TARGET}
-        DEPENDS "${_FUZZER_C}" "${_REDEF_FILE}" "${_SEED_FILE}"
+        DEPENDS "${_FUZZER_C}" "${_REDEF_FILE}" "${_SEED_FILE}" "${_OFFSETS_FILE}"
     )
 
     set_target_properties(${_GENERATE_TARGET} PROPERTIES
         ABSOLUTION_FUZZER_C  "${_FUZZER_C}"
         ABSOLUTION_REDEF     "${_REDEF_FILE}"
         ABSOLUTION_SEED      "${_SEED_FILE}"
+        ABSOLUTION_OFFSETS   "${_OFFSETS_FILE}"
     )
 
     add_dependencies(${_GENERATE_TARGET} ${_OBJ_LIB})
@@ -383,6 +391,7 @@ $<JOIN:$<TARGET_PROPERTY:${_OBJ_LIB},COMPILE_OPTIONS>,\n>
     set(${FUZZ_NAME}_SEED_FILE       "${_SEED_FILE}"       PARENT_SCOPE)
     set(${FUZZ_NAME}_FUZZER_C        "${_FUZZER_C}"        PARENT_SCOPE)
     set(${FUZZ_NAME}_REDEF_FILE      "${_REDEF_FILE}"      PARENT_SCOPE)
+    set(${FUZZ_NAME}_OFFSETS_FILE    "${_OFFSETS_FILE}"    PARENT_SCOPE)
     set(${FUZZ_NAME}_GENERATE_TARGET "${_GENERATE_TARGET}" PARENT_SCOPE)
     set(${FUZZ_NAME}_REDEF_TARGET    "${_REDEF_TARGET}"    PARENT_SCOPE)
 endfunction()

@@ -1,6 +1,7 @@
 const std = @import("std");
 const Parser = @import("../Parser.zig");
 const ir = @import("ir.zig");
+const seed = @import("../seed.zig");
 
 fn writeIndent(io: std.Io, file: *std.Io.File, depth: usize) !void {
     for (0..depth) |_| try file.writeStreamingAll(io, "    ");
@@ -90,6 +91,168 @@ fn mangleName(allocator: std.mem.Allocator, path: []const u8, symbol: []const u8
         }
     }
     return std.fmt.allocPrint(allocator, "{s}_{s}", .{ sanitized, symbol });
+}
+
+/// Name a global is reachable by after linking: mangled for `static` storage
+/// (which `objcopy` renames via the redefinition file), unchanged otherwise.
+fn linkedName(allocator: std.mem.Allocator, g: Parser.Global) ![]const u8 {
+    return if (g.is_static)
+        mangleName(allocator, g.source_file, g.name)
+    else
+        allocator.dupe(u8, g.name);
+}
+
+/// Prefix of the emitted per-global offset constants.
+pub const offset_symbol_prefix = "absolution_offset_";
+
+/// Name of the emitted constant holding the total sampled prefix size.
+pub const globals_size_symbol = "absolution_globals_size";
+
+/// Version of the `--offsets` sidecar format.
+pub const offsets_format_version = 1;
+
+/// Where one global's bytes start within the fuzzer input.
+pub const GlobalInputOffset = struct {
+    /// Name as written in the source.
+    name: []const u8,
+    /// Translation unit the global was parsed from.
+    source_file: []const u8,
+    is_static: bool,
+    /// Linker-visible name; also the suffix of the emitted offset constant.
+    linked_name: []const u8,
+    /// Byte offset of the global's first input byte, relative to input start.
+    input_offset: usize,
+    /// Input bytes the global consumes (0 when fully padding or fully constrained).
+    input_bytes: usize,
+};
+
+/// Map every global to its byte offset in the fuzzer input, in sampling order.
+///
+/// Offsets are relative to the start of the input (base 0) and match the `off`
+/// counter the emitted `sample_invariant()` walks, so the sum of `input_bytes`
+/// equals @ref seed.neededBytesFromGlobals.  Caller owns the result; free it
+/// with @ref freeInputLayout.
+pub fn computeInputLayout(
+    allocator: std.mem.Allocator,
+    globals: []const Parser.Global,
+) ![]GlobalInputOffset {
+    var layout: std.ArrayList(GlobalInputOffset) = .empty;
+    errdefer {
+        for (layout.items) |entry| allocator.free(entry.linked_name);
+        layout.deinit(allocator);
+    }
+
+    var off: usize = 0;
+    for (globals) |g| {
+        const linked = try linkedName(allocator, g);
+        errdefer allocator.free(linked);
+
+        const bytes = ir.globalInputBytes(g);
+        try layout.append(allocator, .{
+            .name = g.name,
+            .source_file = g.source_file,
+            .is_static = g.is_static,
+            .linked_name = linked,
+            .input_offset = off,
+            .input_bytes = bytes,
+        });
+        off += bytes;
+    }
+
+    return layout.toOwnedSlice(allocator);
+}
+
+pub fn freeInputLayout(allocator: std.mem.Allocator, layout: []const GlobalInputOffset) void {
+    for (layout) |entry| allocator.free(entry.linked_name);
+    allocator.free(layout);
+}
+
+/// Emit the total prefix size and one offset constant per global.
+///
+/// These have external linkage so a harness can read the layout it was built
+/// against instead of re-deriving it from the generated source.  A repeated
+/// linked name is emitted once: C rejects a duplicate definition even when the
+/// two values agree.
+fn emitOffsetSymbols(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    file: *std.Io.File,
+    layout: []const GlobalInputOffset,
+    needed_bytes: usize,
+) !void {
+    const size_def = try std.fmt.allocPrint(
+        allocator,
+        "const size_t {s} = {d};\n",
+        .{ globals_size_symbol, needed_bytes },
+    );
+    defer allocator.free(size_def);
+    try file.writeStreamingAll(io, size_def);
+
+    var seen: std.StringHashMapUnmanaged(void) = .empty;
+    defer seen.deinit(allocator);
+
+    for (layout) |entry| {
+        if ((try seen.getOrPut(allocator, entry.linked_name)).found_existing) continue;
+
+        const line = try std.fmt.allocPrint(
+            allocator,
+            "const size_t {s}{s} = {d};\n",
+            .{ offset_symbol_prefix, entry.linked_name, entry.input_offset },
+        );
+        defer allocator.free(line);
+        try file.writeStreamingAll(io, line);
+    }
+
+    try file.writeStreamingAll(io, "\n");
+}
+
+/// Write the machine-readable offset sidecar.
+///
+/// Line-oriented like the redefinition file so tooling can read it without a
+/// parser: `version` and `globals_size` directives, then one `global` record
+/// per entry.  `source_file` comes last because it may contain spaces.
+fn writeOffsetsFile(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    path: []const u8,
+    layout: []const GlobalInputOffset,
+    needed_bytes: usize,
+) !void {
+    var file = try std.Io.Dir.cwd().createFile(io, path, .{ .truncate = true });
+    defer file.close(io);
+
+    try file.writeStreamingAll(io,
+        \\# absolution fuzzer input layout
+        \\# global <offset> <bytes> <static:0|1> <offset_symbol> <name> <source_file>
+        \\
+    );
+
+    const header = try std.fmt.allocPrint(
+        allocator,
+        "version {d}\nglobals_size {d}\n",
+        .{ offsets_format_version, needed_bytes },
+    );
+    defer allocator.free(header);
+    try file.writeStreamingAll(io, header);
+
+    for (layout) |entry| {
+        const source_file = if (entry.source_file.len == 0) "-" else entry.source_file;
+        const line = try std.fmt.allocPrint(
+            allocator,
+            "global {d} {d} {d} {s}{s} {s} {s}\n",
+            .{
+                entry.input_offset,
+                entry.input_bytes,
+                @intFromBool(entry.is_static),
+                offset_symbol_prefix,
+                entry.linked_name,
+                entry.name,
+                source_file,
+            },
+        );
+        defer allocator.free(line);
+        try file.writeStreamingAll(io, line);
+    }
 }
 
 /// Build a C expression that indexes into a dense whole_values blob using the
@@ -240,6 +403,9 @@ fn emitDomainTables(io: std.Io, globals: []const Parser.Global, file: *std.Io.Fi
 
 /// Generate the complete fuzzer C file and `objcopy` redefinition file.
 /// Writes includes, extern/weak declarations, sampler, checker, and libFuzzer entrypoint.
+///
+/// When `offsets_path` is set, the input layout is additionally exported: as
+/// linkable constants in the generated source and as a sidecar file at that path.
 pub fn writeFuzzerC(
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -249,6 +415,7 @@ pub fn writeFuzzerC(
     redef_path: []const u8,
     entry_name: []const u8,
     func_symbols: []const []const u8,
+    offsets_path: ?[]const u8,
 ) !void {
     var file = try std.Io.Dir.cwd().createFile(io, out_path, .{ .truncate = true });
     defer file.close(io);
@@ -281,10 +448,7 @@ pub fn writeFuzzerC(
     if (func_symbols.len > 0) try file.writeStreamingAll(io, "\n");
 
     for (globals) |g| {
-        const mangled = if (g.is_static)
-            try mangleName(allocator, g.source_file, g.name)
-        else
-            try allocator.dupe(u8, g.name);
+        const mangled = try linkedName(allocator, g);
         defer allocator.free(mangled);
 
         if (g.is_static) {
@@ -299,6 +463,14 @@ pub fn writeFuzzerC(
     }
 
     try file.writeStreamingAll(io, "\n");
+
+    if (offsets_path) |path| {
+        const layout = try computeInputLayout(allocator, globals);
+        defer freeInputLayout(allocator, layout);
+
+        try emitOffsetSymbols(allocator, io, &file, layout, needed_bytes);
+        try writeOffsetsFile(allocator, io, path, layout, needed_bytes);
+    }
 
     try emitDomainTables(io, globals, &file);
     try emitSampler(allocator, io, globals, &file);
@@ -822,6 +994,331 @@ test "mangleName handles empty path" {
     const result = try mangleName(alloc, "", "sym");
     defer alloc.free(result);
     try std.testing.expectEqualStrings("_sym", result);
+}
+
+test "linkedName leaves extern globals untouched and mangles statics" {
+    const alloc = std.testing.allocator;
+
+    const ext = try linkedName(alloc, .{
+        .name = "shared",
+        .source_file = "src/mod.c",
+        .size_bytes = 4,
+        .is_static = false,
+        .dims = &.{},
+    });
+    defer alloc.free(ext);
+    try std.testing.expectEqualStrings("shared", ext);
+
+    const stat = try linkedName(alloc, .{
+        .name = "hidden",
+        .source_file = "src/mod.c",
+        .size_bytes = 4,
+        .is_static = true,
+        .dims = &.{},
+    });
+    defer alloc.free(stat);
+    try std.testing.expectEqualStrings("src_mod_c_hidden", stat);
+}
+
+// ---------------------------------------------------------------------------
+// Input layout tests
+// ---------------------------------------------------------------------------
+
+/// Build a single-field global for layout tests.
+fn layoutTestGlobal(
+    name: []const u8,
+    source_file: []const u8,
+    is_static: bool,
+    dims: []const ir.Dimension,
+    fields: []Parser.Field,
+) Parser.Global {
+    return .{
+        .name = name,
+        .source_file = source_file,
+        .size_bytes = 64,
+        .is_static = is_static,
+        .dims = dims,
+        .fields = fields,
+    };
+}
+
+test "computeInputLayout assigns sequential offsets across globals" {
+    const alloc = std.testing.allocator;
+
+    const first: []Parser.Field = @constCast(&[_]Parser.Field{.{ .name = ".x", .bit_width = 32 }});
+    const second: []Parser.Field = @constCast(&[_]Parser.Field{.{ .name = ".y", .bit_width = 8 }});
+    const globals: []const Parser.Global = &.{
+        layoutTestGlobal("a", "", false, &.{}, first),
+        layoutTestGlobal("b", "", false, &.{}, second),
+    };
+
+    const layout = try computeInputLayout(alloc, globals);
+    defer freeInputLayout(alloc, layout);
+
+    try std.testing.expectEqual(@as(usize, 2), layout.len);
+    try std.testing.expectEqual(@as(usize, 0), layout[0].input_offset);
+    try std.testing.expectEqual(@as(usize, 4), layout[0].input_bytes);
+    try std.testing.expectEqual(@as(usize, 4), layout[1].input_offset);
+    try std.testing.expectEqual(@as(usize, 1), layout[1].input_bytes);
+}
+
+test "computeInputLayout skips padding without advancing the offset" {
+    const alloc = std.testing.allocator;
+
+    const fields: []Parser.Field = @constCast(&[_]Parser.Field{
+        .{ .name = ".x", .bit_width = 8 },
+        .{ .name = "._pad0", .offset_bits = 8, .bit_width = 24, .is_padding = true },
+        .{ .name = ".y", .offset_bits = 32, .bit_width = 32 },
+    });
+    const trailing: []Parser.Field = @constCast(&[_]Parser.Field{.{ .name = ".z", .bit_width = 8 }});
+    const globals: []const Parser.Global = &.{
+        layoutTestGlobal("padded", "", false, &.{}, fields),
+        layoutTestGlobal("after", "", false, &.{}, trailing),
+    };
+
+    const layout = try computeInputLayout(alloc, globals);
+    defer freeInputLayout(alloc, layout);
+
+    try std.testing.expectEqual(@as(usize, 5), layout[0].input_bytes);
+    try std.testing.expectEqual(@as(usize, 5), layout[1].input_offset);
+}
+
+test "computeInputLayout multiplies global and field dimensions" {
+    const alloc = std.testing.allocator;
+
+    const fields: []Parser.Field = @constCast(&[_]Parser.Field{.{
+        .name = ".x",
+        .bit_width = 8,
+        .dims = &.{.{ .len = 4, .stride_bytes = 1 }},
+    }});
+    const globals: []const Parser.Global = &.{
+        layoutTestGlobal("arr", "", false, &.{.{ .len = 3, .stride_bytes = 4 }}, fields),
+    };
+
+    const layout = try computeInputLayout(alloc, globals);
+    defer freeInputLayout(alloc, layout);
+
+    try std.testing.expectEqual(@as(usize, 12), layout[0].input_bytes);
+}
+
+test "computeInputLayout spends one selector byte per constrained instance" {
+    const alloc = std.testing.allocator;
+
+    const multi: []Parser.Field = @constCast(&[_]Parser.Field{
+        .{ .name = ".a", .bit_width = 32, .domain = .{ .values = &.{ "0xAA", "0xBB" } } },
+        .{ .name = ".b", .bit_width = 64, .domain = .{ .pointers = &.{ "f", "g" } } },
+    });
+    const singleton: []Parser.Field = @constCast(&[_]Parser.Field{
+        .{ .name = ".a", .bit_width = 32, .domain = .{ .values = &.{"0xAA"} } },
+        .{ .name = ".b", .bit_width = 64, .domain = .{ .pointers = &.{"f"} } },
+    });
+    const globals: []const Parser.Global = &.{
+        layoutTestGlobal("constrained", "", false, &.{}, multi),
+        layoutTestGlobal("pinned", "", false, &.{}, singleton),
+    };
+
+    const layout = try computeInputLayout(alloc, globals);
+    defer freeInputLayout(alloc, layout);
+
+    try std.testing.expectEqual(@as(usize, 2), layout[0].input_bytes);
+    // A pinned global consumes nothing, so it shares its successor's offset.
+    try std.testing.expectEqual(@as(usize, 2), layout[1].input_offset);
+    try std.testing.expectEqual(@as(usize, 0), layout[1].input_bytes);
+}
+
+test "computeInputLayout charges whole_values per global instance only" {
+    const alloc = std.testing.allocator;
+
+    const fields: []Parser.Field = @constCast(&[_]Parser.Field{.{
+        .name = ".buf",
+        .bit_width = 8,
+        .dims = &.{.{ .len = 2, .stride_bytes = 1 }},
+        .domain = .{ .whole_values = &.{ &[_]u8{ 1, 2 }, &[_]u8{ 3, 4 } } },
+    }});
+    const globals: []const Parser.Global = &.{
+        layoutTestGlobal("blobs", "", false, &.{.{ .len = 3, .stride_bytes = 2 }}, fields),
+    };
+
+    const layout = try computeInputLayout(alloc, globals);
+    defer freeInputLayout(alloc, layout);
+
+    try std.testing.expectEqual(@as(usize, 3), layout[0].input_bytes);
+}
+
+test "computeInputLayout keeps same-named statics distinct" {
+    const alloc = std.testing.allocator;
+
+    const first: []Parser.Field = @constCast(&[_]Parser.Field{.{ .name = ".x", .bit_width = 8 }});
+    const second: []Parser.Field = @constCast(&[_]Parser.Field{.{ .name = ".x", .bit_width = 8 }});
+    const globals: []const Parser.Global = &.{
+        layoutTestGlobal("state", "a/one.c", true, &.{}, first),
+        layoutTestGlobal("state", "b/two.c", true, &.{}, second),
+    };
+
+    const layout = try computeInputLayout(alloc, globals);
+    defer freeInputLayout(alloc, layout);
+
+    try std.testing.expectEqualStrings("a_one_c_state", layout[0].linked_name);
+    try std.testing.expectEqualStrings("b_two_c_state", layout[1].linked_name);
+    try std.testing.expectEqual(@as(usize, 0), layout[0].input_offset);
+    try std.testing.expectEqual(@as(usize, 1), layout[1].input_offset);
+}
+
+test "computeInputLayout handles a fully padded global" {
+    const alloc = std.testing.allocator;
+
+    const fields: []Parser.Field = @constCast(&[_]Parser.Field{
+        .{ .name = "._pad0", .bit_width = 32, .is_padding = true },
+    });
+    const globals: []const Parser.Global = &.{layoutTestGlobal("zero", "", false, &.{}, fields)};
+
+    const layout = try computeInputLayout(alloc, globals);
+    defer freeInputLayout(alloc, layout);
+
+    try std.testing.expectEqual(@as(usize, 0), layout[0].input_offset);
+    try std.testing.expectEqual(@as(usize, 0), layout[0].input_bytes);
+}
+
+test "computeInputLayout is empty for no globals" {
+    const alloc = std.testing.allocator;
+    const layout = try computeInputLayout(alloc, &.{});
+    defer freeInputLayout(alloc, layout);
+    try std.testing.expectEqual(@as(usize, 0), layout.len);
+}
+
+test "computeInputLayout total agrees with neededBytesFromGlobals" {
+    const alloc = std.testing.allocator;
+
+    const mixed: []Parser.Field = @constCast(&[_]Parser.Field{
+        .{ .name = ".x", .bit_width = 16 },
+        .{ .name = "._pad0", .offset_bits = 16, .bit_width = 16, .is_padding = true },
+        .{ .name = ".sel", .offset_bits = 32, .bit_width = 32, .domain = .{ .values = &.{ "1", "2", "3" } } },
+    });
+    const arrayed: []Parser.Field = @constCast(&[_]Parser.Field{.{
+        .name = ".b",
+        .bit_width = 8,
+        .dims = &.{.{ .len = 5, .stride_bytes = 1 }},
+    }});
+    const globals: []const Parser.Global = &.{
+        layoutTestGlobal("mixed", "src/a.c", true, &.{}, mixed),
+        layoutTestGlobal("arrayed", "src/b.c", false, &.{.{ .len = 2, .stride_bytes = 5 }}, arrayed),
+    };
+
+    const layout = try computeInputLayout(alloc, globals);
+    defer freeInputLayout(alloc, layout);
+
+    var total: usize = 0;
+    for (layout) |entry| total += entry.input_bytes;
+
+    try std.testing.expectEqual(seed.neededBytesFromGlobals(globals), total);
+    const last = layout[layout.len - 1];
+    try std.testing.expectEqual(total, last.input_offset + last.input_bytes);
+}
+
+test "writeFuzzerC without offsets path emits no layout constants" {
+    const io = std.testing.io;
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir_path = try std.fs.path.join(alloc, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer alloc.free(dir_path);
+    const out_path = try std.fs.path.join(alloc, &.{ dir_path, "fuzzer.c" });
+    defer alloc.free(out_path);
+    const redef_path = try std.fs.path.join(alloc, &.{ dir_path, "fuzzer.redef" });
+    defer alloc.free(redef_path);
+
+    const fields: []Parser.Field = @constCast(&[_]Parser.Field{.{ .name = ".x", .bit_width = 32 }});
+    const globals: []const Parser.Global = &.{layoutTestGlobal("g", "", false, &.{}, fields)};
+
+    try writeFuzzerC(alloc, io, globals, 4, out_path, redef_path, "Entry", &.{}, null);
+
+    var buf: [16384]u8 = undefined;
+    const out = try readTmpFile(&tmp, "fuzzer.c", &buf);
+    try std.testing.expect(std.mem.indexOf(u8, out, globals_size_symbol) == null);
+    try std.testing.expect(std.mem.indexOf(u8, out, offset_symbol_prefix) == null);
+}
+
+test "writeFuzzerC with offsets path emits constants and sidecar" {
+    const io = std.testing.io;
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir_path = try std.fs.path.join(alloc, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer alloc.free(dir_path);
+    const out_path = try std.fs.path.join(alloc, &.{ dir_path, "fuzzer.c" });
+    defer alloc.free(out_path);
+    const redef_path = try std.fs.path.join(alloc, &.{ dir_path, "fuzzer.redef" });
+    defer alloc.free(redef_path);
+    const offsets_path = try std.fs.path.join(alloc, &.{ dir_path, "fuzzer.offsets" });
+    defer alloc.free(offsets_path);
+
+    const ctrl: []Parser.Field = @constCast(&[_]Parser.Field{.{
+        .name = ".",
+        .bit_width = 8,
+        .dims = &.{.{ .len = 16, .stride_bytes = 1 }},
+    }});
+    const hidden: []Parser.Field = @constCast(&[_]Parser.Field{.{ .name = ".x", .bit_width = 32 }});
+    const globals: []const Parser.Global = &.{
+        layoutTestGlobal("fuzz_ctrl", "mock/mocks.c", false, &.{}, ctrl),
+        layoutTestGlobal("state", "src/mod.c", true, &.{}, hidden),
+    };
+
+    try writeFuzzerC(alloc, io, globals, 20, out_path, redef_path, "Entry", &.{}, offsets_path);
+
+    var buf: [16384]u8 = undefined;
+    const c_out = try readTmpFile(&tmp, "fuzzer.c", &buf);
+    try std.testing.expect(std.mem.indexOf(u8, c_out, "const size_t absolution_globals_size = 20;") != null);
+    try std.testing.expect(std.mem.indexOf(u8, c_out, "const size_t absolution_offset_fuzz_ctrl = 0;") != null);
+    try std.testing.expect(std.mem.indexOf(u8, c_out, "const size_t absolution_offset_src_mod_c_state = 16;") != null);
+
+    var off_buf: [4096]u8 = undefined;
+    const off_out = try readTmpFile(&tmp, "fuzzer.offsets", &off_buf);
+    try std.testing.expect(std.mem.indexOf(u8, off_out, "version 1\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, off_out, "globals_size 20\n") != null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        off_out,
+        "global 0 16 0 absolution_offset_fuzz_ctrl fuzz_ctrl mock/mocks.c\n",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        off_out,
+        "global 16 4 1 absolution_offset_src_mod_c_state state src/mod.c\n",
+    ) != null);
+}
+
+test "writeOffsetsFile marks an unknown source file and repeats no constant" {
+    const io = std.testing.io;
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir_path = try std.fs.path.join(alloc, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer alloc.free(dir_path);
+    const out_path = try std.fs.path.join(alloc, &.{ dir_path, "fuzzer.c" });
+    defer alloc.free(out_path);
+    const redef_path = try std.fs.path.join(alloc, &.{ dir_path, "fuzzer.redef" });
+    defer alloc.free(redef_path);
+    const offsets_path = try std.fs.path.join(alloc, &.{ dir_path, "fuzzer.offsets" });
+    defer alloc.free(offsets_path);
+
+    const first: []Parser.Field = @constCast(&[_]Parser.Field{.{ .name = ".x", .bit_width = 8 }});
+    const second: []Parser.Field = @constCast(&[_]Parser.Field{.{ .name = ".x", .bit_width = 8 }});
+    const globals: []const Parser.Global = &.{
+        layoutTestGlobal("dup", "", false, &.{}, first),
+        layoutTestGlobal("dup", "", false, &.{}, second),
+    };
+
+    try writeFuzzerC(alloc, io, globals, 2, out_path, redef_path, "Entry", &.{}, offsets_path);
+
+    var off_buf: [4096]u8 = undefined;
+    const off_out = try readTmpFile(&tmp, "fuzzer.offsets", &off_buf);
+    try std.testing.expect(std.mem.indexOf(u8, off_out, "global 0 1 0 absolution_offset_dup dup -\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, off_out, "global 1 1 0 absolution_offset_dup dup -\n") != null);
+
+    var buf: [16384]u8 = undefined;
+    const c_out = try readTmpFile(&tmp, "fuzzer.c", &buf);
+    const first_def = std.mem.indexOf(u8, c_out, "const size_t absolution_offset_dup").?;
+    try std.testing.expect(std.mem.indexOfPos(u8, c_out, first_def + 1, "const size_t absolution_offset_dup") == null);
 }
 
 test "emitOffsetCalc base offset only" {
@@ -1528,7 +2025,7 @@ test "writeFuzzerC end-to-end produces valid output" {
         .fields = fields,
     }};
 
-    try writeFuzzerC(alloc, io, globals, 4, out_path, redef_path, "TestHarness", &.{});
+    try writeFuzzerC(alloc, io, globals, 4, out_path, redef_path, "TestHarness", &.{}, null);
 
     var buf: [16384]u8 = undefined;
     const out = try readTmpFile(&tmp, "fuzzer.c", &buf);
@@ -1568,7 +2065,7 @@ test "writeFuzzerC with static global writes redef file" {
         .fields = fields,
     }};
 
-    try writeFuzzerC(alloc, io, globals, 1, out_path, redef_path, "TestEntry", &.{});
+    try writeFuzzerC(alloc, io, globals, 1, out_path, redef_path, "TestEntry", &.{}, null);
 
     var buf: [4096]u8 = undefined;
     const redef_out = try readTmpFile(&tmp, "fuzzer2.redef", &buf);
@@ -1592,7 +2089,7 @@ test "writeFuzzerC with func_symbols emits extern declarations" {
     defer alloc.free(redef_path);
 
     const globals: []const Parser.Global = &.{};
-    try writeFuzzerC(alloc, io, globals, 0, out_path, redef_path, "Entry", &.{"my_handler"});
+    try writeFuzzerC(alloc, io, globals, 0, out_path, redef_path, "Entry", &.{"my_handler"}, null);
 
     var buf: [8192]u8 = undefined;
     const c_out = try readTmpFile(&tmp, "fuzzer3.c", &buf);

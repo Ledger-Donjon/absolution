@@ -66,6 +66,30 @@ pub fn constrainedSelectorBytes(domain: Domain) usize {
     };
 }
 
+/// Fuzzer-input bytes one field consumes, for a global repeated `global_mult` times.
+///
+/// Mirrors what the emitted sampler advances `off` by: padding is zeroed rather
+/// than sampled, constrained domains spend one selector byte per instance, and
+/// `whole_values` copies a static blob so it spends nothing per element.
+pub fn fieldInputBytes(f: Field, global_mult: usize) usize {
+    if (f.is_padding) return 0;
+    const field_mult = dimsProduct(f.dims);
+    return switch (f.domain) {
+        .top => elementBytes(f) * global_mult * field_mult,
+        .values, .pointers => constrainedSelectorBytes(f.domain) * global_mult * field_mult,
+        // Blob bytes come from emitted domain tables, not from the fuzzer stream.
+        .whole_values => global_mult * constrainedSelectorBytes(f.domain),
+    };
+}
+
+/// Fuzzer-input bytes one global consumes across all of its fields.
+pub fn globalInputBytes(g: Global) usize {
+    const global_mult = dimsProduct(g.dims);
+    var total: usize = 0;
+    for (g.fields) |f| total += fieldInputBytes(f, global_mult);
+    return total;
+}
+
 /// Rejects candidate lists that cannot be indexed with one byte (>256 choices).
 pub fn validateConstrainedDomain(domain: Domain) DomainError!void {
     switch (domain) {
