@@ -1,6 +1,7 @@
 const std = @import("std");
 const Parser = @import("../Parser.zig");
 const ir = @import("ir.zig");
+const prefixheader = @import("prefixheader.zig");
 
 fn writeIndent(io: std.Io, file: *std.Io.File, depth: usize) !void {
     for (0..depth) |_| try file.writeStreamingAll(io, "    ");
@@ -250,12 +251,23 @@ pub fn writeFuzzerC(
     entry_name: []const u8,
     func_symbols: []const []const u8,
 ) !void {
+    const header_path = try prefixheader.path(allocator, out_path);
+    defer allocator.free(header_path);
+    try prefixheader.write(allocator, io, globals, needed_bytes, header_path);
+
     var file = try std.Io.Dir.cwd().createFile(io, out_path, .{ .truncate = true });
     defer file.close(io);
 
     var redef_file = try std.Io.Dir.cwd().createFile(io, redef_path, .{ .truncate = true });
     defer redef_file.close(io);
 
+    const header_include = try std.fmt.allocPrint(
+        allocator,
+        "#include \"{s}\"\n",
+        .{std.fs.path.basename(header_path)},
+    );
+    defer allocator.free(header_include);
+    try file.writeStreamingAll(io, header_include);
     try file.writeStreamingAll(io,
         \\#include <assert.h>
         \\#include <stdint.h>
@@ -268,10 +280,6 @@ pub fn writeFuzzerC(
     const fwd_decl = try std.fmt.allocPrint(allocator, "int {s}(const uint8_t *data, size_t size);\n\n", .{entry_name});
     defer allocator.free(fwd_decl);
     try file.writeStreamingAll(io, fwd_decl);
-
-    const globals_size_define = try std.fmt.allocPrint(allocator, "#define ABSOLUTION_GLOBALS_SIZE {d}\n\n", .{needed_bytes});
-    defer allocator.free(globals_size_define);
-    try file.writeStreamingAll(io, globals_size_define);
 
     for (func_symbols) |sym| {
         const func_decl = try std.fmt.allocPrint(allocator, "extern void {s}(void);\n", .{sym});
@@ -317,7 +325,7 @@ fn emitSampler(allocator: std.mem.Allocator, io: std.Io, globals: []const Parser
     var ptr_idx: usize = 0;
     try file.writeStreamingAll(io, "ptrdiff_t sample_invariant(const uint8_t *data, size_t size) {\n");
     try file.writeStreamingAll(io, "    size_t off = 0;\n");
-    try file.writeStreamingAll(io, "    const size_t needed = ABSOLUTION_GLOBALS_SIZE ;\n");
+    try file.writeStreamingAll(io, "    const size_t needed = ABSOLUTION_STATE_PREFIX_SIZE;\n");
     try file.writeStreamingAll(io, "    if (size < needed) return -1;\n");
 
     for (globals) |g| {
@@ -1501,6 +1509,8 @@ test "writeFuzzerC end-to-end produces valid output" {
     defer alloc.free(dir_path);
     const out_path = try std.fs.path.join(alloc, &.{ dir_path, "fuzzer.c" });
     defer alloc.free(out_path);
+    const header_path = try std.fs.path.join(alloc, &.{ dir_path, "fuzzer.h" });
+    defer alloc.free(header_path);
     const redef_path = try std.fs.path.join(alloc, &.{ dir_path, "fuzzer.redef" });
     defer alloc.free(redef_path);
 
@@ -1532,9 +1542,15 @@ test "writeFuzzerC end-to-end produces valid output" {
 
     var buf: [16384]u8 = undefined;
     const out = try readTmpFile(&tmp, "fuzzer.c", &buf);
+    var header_buf: [16384]u8 = undefined;
+    const header = try readTmpFile(&tmp, "fuzzer.h", &header_buf);
     try std.testing.expect(std.mem.indexOf(u8, out, "#include <assert.h>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "#include \"fuzzer.h\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "int TestHarness(const uint8_t *data, size_t size)") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "#define ABSOLUTION_GLOBALS_SIZE 4") != null);
+    try std.testing.expect(std.mem.indexOf(u8, header, "#define ABSOLUTION_STATE_PREFIX_SIZE 4u") != null);
+    try std.testing.expect(std.mem.indexOf(u8, header, "} AbsolutionStatePrefix;") != null);
+    try std.testing.expect(std.mem.indexOf(u8, header, "global_0_g") != null);
+    try std.testing.expect(std.mem.indexOf(u8, header, "field_0_x_bytes[4]") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "uint8_t __attribute__((weak)) g[8]") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "sample_invariant") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "check_invariant") != null);

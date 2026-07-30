@@ -10,11 +10,13 @@ pub const seed = @import("seed.zig");
 pub const Invariant = @import("Invariant.zig");
 pub const emit = @import("cgen/emit.zig");
 pub const ir = @import("cgen/ir.zig");
+pub const prefixheader = @import("cgen/prefixheader.zig");
 
 test {
     _ = @import("Invariant.zig");
     _ = @import("cgen/ir.zig");
     _ = @import("cgen/emit.zig");
+    _ = @import("cgen/prefixheader.zig");
     _ = @import("seed.zig");
     _ = @import("type_flatten.zig");
     _ = @import("include_paths.zig");
