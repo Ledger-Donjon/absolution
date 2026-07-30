@@ -235,6 +235,8 @@ fn runOneTest(
     const out_fuzzer = try std.fmt.allocPrint(arena, "{s}/fuzzer.c", .{test_dir});
     const out_redef = try std.fmt.allocPrint(arena, "{s}/redef.txt", .{test_dir});
     const out_obj = try std.fmt.allocPrint(arena, "{s}/fuzzer.o", .{test_dir});
+    const mutator_c = try std.fmt.allocPrint(arena, "{s}/custom_mutator.c", .{test_dir});
+    const mutator_obj = try std.fmt.allocPrint(arena, "{s}/custom_mutator.o", .{test_dir});
 
     // -- Build absolution argv --
     var argv: std.ArrayList([]const u8) = .empty;
@@ -257,7 +259,34 @@ fn runOneTest(
     // 2. Compile generated fuzzer.c
     try execCapture(gpa, io, &.{ "zig", "cc", "-c", out_fuzzer, "-o", out_obj, "-I", tc.dir_path });
 
-    // 3. Golden-file comparison
+    // 3. Compile a custom-mutator translation unit against the generated
+    // state-prefix API.
+    var mutator_file = try std.Io.Dir.cwd().createFile(io, mutator_c, .{ .truncate = true });
+    defer mutator_file.close(io);
+    try mutator_file.writeStreamingAll(io,
+        \\#include "fuzzer.h"
+        \\#include <stddef.h>
+        \\#include <stdint.h>
+        \\#include <string.h>
+        \\
+        \\size_t LLVMFuzzerCustomMutator(
+        \\    uint8_t *data, size_t size, size_t max_size, unsigned seed
+        \\) {
+        \\    (void)seed;
+        \\    if (max_size < ABSOLUTION_STATE_PREFIX_SIZE) return 0;
+        \\    if (size < ABSOLUTION_STATE_PREFIX_SIZE) {
+        \\        memset(data + size, 0, ABSOLUTION_STATE_PREFIX_SIZE - size);
+        \\        size = ABSOLUTION_STATE_PREFIX_SIZE;
+        \\    }
+        \\    AbsolutionStatePrefix *state = (AbsolutionStatePrefix *)data;
+        \\    (void)state;
+        \\    return size;
+        \\}
+        \\
+    );
+    try execCapture(gpa, io, &.{ "zig", "cc", "-c", mutator_c, "-o", mutator_obj, "-I", test_dir });
+
+    // 4. Golden-file comparison
     const actual = try std.Io.Dir.cwd().readFileAlloc(io, out_zon, gpa, .limited(10 * 1024 * 1024));
     defer gpa.free(actual);
     const expected = try std.Io.Dir.cwd().readFileAlloc(io, tc.golden_path, gpa, .limited(10 * 1024 * 1024));
