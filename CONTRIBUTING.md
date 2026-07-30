@@ -15,9 +15,10 @@ absolution/
 │   ├── include_paths.zig     # Include path discovery (zig cc compatibility)
 │   ├── seed.zig              # initial seed generation
 │   └── cgen/
-│       ├── ir.zig          # Core data structures (Domain, Field, Global)
+│       ├── ir.zig            # Core data structures (Domain, Field, Global)
 │       ├── builder.zig       # File writing utilities and type re-exports
-│       └── emit.zig          # C code emission (sampler, checker, entrypoint)
+│       ├── emit.zig          # C code emission (sampler, checker, entrypoint)
+│       └── prefixheader.zig  # Public state-prefix header generation
 ├── tests/                    # Integration test cases
 │   └── <test_name>/
 │       ├── <file>.c          # Test input
@@ -78,10 +79,17 @@ Core data structures:
 ### `cgen/emit.zig`
 
 C code emission:
-- `writeFuzzerC`: Writes includes, extern declarations, redef file, sampler, checker, and entrypoint
+- `writeFuzzerC`: Coordinates header generation and writes includes, extern declarations, redef file, sampler, checker, and entrypoint
 - `emitSampler`: Generates `sample_invariant()` function
 - `emitChecker`: Generates `check_invariant()` function
 - `emitEntrypoint`: Generates `LLVMFuzzerTestOneInput()`
+
+### `cgen/prefixheader.zig`
+
+State-prefix header emission:
+- Derives the header path from the generated C output path
+- Emits `AbsolutionStatePrefix` and `ABSOLUTION_STATE_PREFIX_SIZE`
+- Preserves sampler ordering for global and field dimensions
 
 ## Development Workflow
 

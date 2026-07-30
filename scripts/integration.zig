@@ -3,7 +3,9 @@
 //! Finds .c test files under tests/, builds absolution once, then for each test:
 //!   1. Runs absolution to produce .zon and fuzzer.c
 //!   2. Compiles the generated fuzzer.c with `zig cc`
-//!   3. Compares the .zon output against a golden file
+//!   3. Compiles a custom mutator against the generated state-prefix header
+//!   4. Runs an optional runtime sidecar (`<target>.runtime.c`)
+//!   5. Compares the .zon output against a golden file
 //!
 //! Run with:  zig run scripts/integration.zig
 //!
@@ -107,6 +109,7 @@ const TestCase = struct {
     flags: []const []const u8 = &.{},
     targets: []const []const u8 = &.{},
     invariant_path: ?[]const u8 = null,
+    runtime_path: ?[]const u8 = null,
 };
 
 // -----------------------------------------------------------------------
@@ -205,6 +208,10 @@ fn discoverTests(arena: std.mem.Allocator, io: std.Io, cases: *std.ArrayList(Tes
         const inv_path = try std.fmt.allocPrint(arena, "{s}.in", .{c_path});
         const invariant_path: ?[]const u8 = if (fileExists(cwd, io, inv_path)) inv_path else null;
 
+        // .runtime.c sidecar (compiled and run with the generated fuzzer)
+        const runtime_candidate = try std.fmt.allocPrint(arena, "{s}.runtime.c", .{c_path});
+        const runtime_path: ?[]const u8 = if (fileExists(cwd, io, runtime_candidate)) runtime_candidate else null;
+
         try cases.append(arena, .{
             .c_path = c_path,
             .golden_path = golden_path,
@@ -213,6 +220,7 @@ fn discoverTests(arena: std.mem.Allocator, io: std.Io, cases: *std.ArrayList(Tes
             .flags = flags,
             .targets = targets,
             .invariant_path = invariant_path,
+            .runtime_path = runtime_path,
         });
     }
 }
@@ -235,6 +243,9 @@ fn runOneTest(
     const out_fuzzer = try std.fmt.allocPrint(arena, "{s}/fuzzer.c", .{test_dir});
     const out_redef = try std.fmt.allocPrint(arena, "{s}/redef.txt", .{test_dir});
     const out_obj = try std.fmt.allocPrint(arena, "{s}/fuzzer.o", .{test_dir});
+    const mutator_c = try std.fmt.allocPrint(arena, "{s}/custom_mutator.c", .{test_dir});
+    const mutator_obj = try std.fmt.allocPrint(arena, "{s}/custom_mutator.o", .{test_dir});
+    const runtime_exe = try std.fmt.allocPrint(arena, "{s}/runtime_test", .{test_dir});
 
     // -- Build absolution argv --
     var argv: std.ArrayList([]const u8) = .empty;
@@ -257,7 +268,47 @@ fn runOneTest(
     // 2. Compile generated fuzzer.c
     try execCapture(gpa, io, &.{ "zig", "cc", "-c", out_fuzzer, "-o", out_obj, "-I", tc.dir_path });
 
-    // 3. Golden-file comparison
+    // 3. Compile a custom-mutator translation unit against the generated
+    // state-prefix API.
+    var mutator_file = try std.Io.Dir.cwd().createFile(io, mutator_c, .{ .truncate = true });
+    defer mutator_file.close(io);
+    try mutator_file.writeStreamingAll(io,
+        \\#include "fuzzer.h"
+        \\#include <stddef.h>
+        \\#include <stdint.h>
+        \\#include <string.h>
+        \\
+        \\size_t LLVMFuzzerCustomMutator(
+        \\    uint8_t *data, size_t size, size_t max_size, unsigned seed
+        \\) {
+        \\    (void)seed;
+        \\    if (max_size < ABSOLUTION_STATE_PREFIX_SIZE) return 0;
+        \\    if (size < ABSOLUTION_STATE_PREFIX_SIZE) {
+        \\        memset(data + size, 0, ABSOLUTION_STATE_PREFIX_SIZE - size);
+        \\        size = ABSOLUTION_STATE_PREFIX_SIZE;
+        \\    }
+        \\    AbsolutionStatePrefix *state = (AbsolutionStatePrefix *)data;
+        \\    (void)state;
+        \\    return size;
+        \\}
+        \\
+    );
+    try execCapture(gpa, io, &.{ "zig", "cc", "-c", mutator_c, "-o", mutator_obj, "-I", test_dir });
+
+    // 4. Compile and run a dedicated runtime sidecar, when present.
+    if (tc.runtime_path) |runtime_path| {
+        try execCapture(gpa, io, &.{
+            "zig",        "cc",
+            out_fuzzer,   tc.c_path,
+            runtime_path, "-o",
+            runtime_exe,  "-I",
+            test_dir,     "-I",
+            tc.dir_path,
+        });
+        try execCapture(gpa, io, &.{runtime_exe});
+    }
+
+    // 5. Golden-file comparison
     const actual = try std.Io.Dir.cwd().readFileAlloc(io, out_zon, gpa, .limited(10 * 1024 * 1024));
     defer gpa.free(actual);
     const expected = try std.Io.Dir.cwd().readFileAlloc(io, tc.golden_path, gpa, .limited(10 * 1024 * 1024));

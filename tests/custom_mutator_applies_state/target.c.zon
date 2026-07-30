@@ -1,0 +1,22 @@
+.{.{
+    .name = "app_state",
+    .source_file = "tests/custom_mutator_applies_state/target.c",
+    .size_bytes = 2,
+    .is_static = false,
+    .dims = .{},
+    .fields = .{ .{
+        .name = ".mode",
+        .offset_bits = 0,
+        .bit_width = 8,
+        .dims = .{},
+        .is_padding = false,
+        .domain = .top,
+    }, .{
+        .name = ".counter",
+        .offset_bits = 8,
+        .bit_width = 8,
+        .dims = .{},
+        .is_padding = false,
+        .domain = .top,
+    } },
+}}

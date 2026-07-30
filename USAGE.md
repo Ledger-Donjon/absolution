@@ -291,9 +291,60 @@ Example for `Config configs[10]` with `int values[5]` (struct size 8 bytes):
 }}
 ```
 
-## Generated Code
+## Generated Output
 
-The generated `fuzzer.c` contains:
+Absolution generates the following C interface:
+
+### State-prefix header (`fuzzer.h` by default)
+
+Absolution also generates a header beside the requested C output, using the
+same basename (`--out path/foo.c` produces `path/foo.h`). It exposes:
+
+- `ABSOLUTION_STATE_PREFIX_SIZE`, the number of bytes reserved for state.
+- The packed `AbsolutionStatePrefix` type describing those bytes.
+
+The type contains one nested member per sampled global. Unconstrained fields
+use a `_bytes` member containing their object representation. Constrained
+value, whole-value, and pointer domains use one-byte `_selector` members.
+Fields fixed to a single value and padding consume no input bytes and are
+omitted. Selectors are reduced modulo the number of allowed candidates by the
+generated sampler.
+
+This allows a libFuzzer custom mutator to handle state and entrypoint input
+separately:
+
+```c
+#include "fuzzer.h"
+#include <string.h>
+
+extern size_t LLVMFuzzerMutate(
+    uint8_t *data, size_t size, size_t max_size
+);
+
+size_t LLVMFuzzerCustomMutator(
+    uint8_t *data, size_t size, size_t max_size, unsigned seed
+) {
+    if (max_size < ABSOLUTION_STATE_PREFIX_SIZE)
+        return 0;
+    if (size < ABSOLUTION_STATE_PREFIX_SIZE) {
+        memset(data + size, 0, ABSOLUTION_STATE_PREFIX_SIZE - size);
+        size = ABSOLUTION_STATE_PREFIX_SIZE;
+    }
+
+    AbsolutionStatePrefix *state = (AbsolutionStatePrefix *)data;
+    /* Mutate state->global_<index>_<name>... */
+
+    uint8_t *input = data + ABSOLUTION_STATE_PREFIX_SIZE;
+    size_t input_size = size - ABSOLUTION_STATE_PREFIX_SIZE;
+    input_size = LLVMFuzzerMutate(
+        input,
+        input_size,
+        max_size - ABSOLUTION_STATE_PREFIX_SIZE
+    );
+
+    return ABSOLUTION_STATE_PREFIX_SIZE + input_size;
+}
+```
 
 ### `sample_invariant(data, size)`
 

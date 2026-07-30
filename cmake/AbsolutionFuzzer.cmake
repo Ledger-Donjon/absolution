@@ -41,6 +41,7 @@
 # Exported variables (PARENT_SCOPE):
 #   ${NAME}_SEED_FILE       — Path to the generated seed file.
 #   ${NAME}_FUZZER_C        — Path to the generated fuzzer.c file.
+#   ${NAME}_STATE_HEADER     — Path to the generated state-prefix header.
 #   ${NAME}_REDEF_FILE      — Path to the generated .redef file.
 #   ${NAME}_GENERATE_TARGET — Name of the generate target.
 #   ${NAME}_REDEF_TARGET    — Name of the redef target.
@@ -178,6 +179,7 @@ function(absolution_add_fuzzer)
     file(MAKE_DIRECTORY "${_FUZZ_DIR}")
 
     set(_FUZZER_C      "${_FUZZ_DIR}/fuzzer.c")
+    set(_STATE_HEADER  "${_FUZZ_DIR}/fuzzer.h")
     set(_REDEF_FILE    "${_FUZZ_DIR}/fuzzer.redef")
     set(_SEED_FILE     "${_FUZZ_DIR}/fuzzer.seed")
     set(_OBJ_LIST      "${_FUZZ_DIR}/objfiles.txt")
@@ -275,7 +277,7 @@ $<JOIN:$<TARGET_PROPERTY:${_OBJ_LIB},COMPILE_OPTIONS>,\n>
     set(_GENERATE_TARGET "${FUZZ_NAME}_generate")
 
     add_custom_command(
-        OUTPUT  "${_FUZZER_C}" "${_REDEF_FILE}" "${_SEED_FILE}"
+        OUTPUT  "${_FUZZER_C}" "${_STATE_HEADER}" "${_REDEF_FILE}" "${_SEED_FILE}"
         COMMAND "${CMAKE_COMMAND}"
             "-DABSOLUTION=${ABSOLUTION_EXECUTABLE}"
             "-DTARGETS_FILE=${_TARGETS_FILE}"
@@ -293,11 +295,12 @@ $<JOIN:$<TARGET_PROPERTY:${_OBJ_LIB},COMPILE_OPTIONS>,\n>
         VERBATIM
     )
     add_custom_target(${_GENERATE_TARGET}
-        DEPENDS "${_FUZZER_C}" "${_REDEF_FILE}" "${_SEED_FILE}"
+        DEPENDS "${_FUZZER_C}" "${_STATE_HEADER}" "${_REDEF_FILE}" "${_SEED_FILE}"
     )
 
     set_target_properties(${_GENERATE_TARGET} PROPERTIES
         ABSOLUTION_FUZZER_C  "${_FUZZER_C}"
+        ABSOLUTION_STATE_HEADER "${_STATE_HEADER}"
         ABSOLUTION_REDEF     "${_REDEF_FILE}"
         ABSOLUTION_SEED      "${_SEED_FILE}"
     )
@@ -340,6 +343,7 @@ $<JOIN:$<TARGET_PROPERTY:${_OBJ_LIB},COMPILE_OPTIONS>,\n>
 
     # ── Step 4: Link into the fuzzer executable ───────────────────────────────
     add_executable(${FUZZ_NAME} "${_FUZZER_C}")
+    target_include_directories(${FUZZ_NAME} PRIVATE "${_FUZZ_DIR}")
 
     if(FUZZ_HARNESS)
         target_sources(${FUZZ_NAME} PRIVATE "${FUZZ_HARNESS}")
@@ -382,6 +386,7 @@ $<JOIN:$<TARGET_PROPERTY:${_OBJ_LIB},COMPILE_OPTIONS>,\n>
     # ── Export ────────────────────────────────────────────────────────────────
     set(${FUZZ_NAME}_SEED_FILE       "${_SEED_FILE}"       PARENT_SCOPE)
     set(${FUZZ_NAME}_FUZZER_C        "${_FUZZER_C}"        PARENT_SCOPE)
+    set(${FUZZ_NAME}_STATE_HEADER     "${_STATE_HEADER}"    PARENT_SCOPE)
     set(${FUZZ_NAME}_REDEF_FILE      "${_REDEF_FILE}"      PARENT_SCOPE)
     set(${FUZZ_NAME}_GENERATE_TARGET "${_GENERATE_TARGET}" PARENT_SCOPE)
     set(${FUZZ_NAME}_REDEF_TARGET    "${_REDEF_TARGET}"    PARENT_SCOPE)
