@@ -8,7 +8,9 @@
 #   ./scripts/gen-golden.sh tests/aroccbug
 #
 # This script finds all .c files in the given test directory and generates
-# corresponding .zon golden files by running absolution.
+# corresponding .zon golden files by running absolution.  A .offsets golden is
+# refreshed only when the test already ships one, matching the integration
+# runner, which compares that sidecar only where it exists.
 
 set -euo pipefail
 
@@ -47,6 +49,7 @@ trap "rm -rf $TMPDIR" EXIT
 for C_FILE in $C_FILES; do
     BASENAME=$(basename "$C_FILE")
     ZON_FILE="${TEST_DIR}/${BASENAME}.zon"
+    OFFSETS_FILE="${TEST_DIR}/${BASENAME}.offsets"
     FLAGS_FILE="${TEST_DIR}/${BASENAME}.flags"
     
     echo "Generating golden file for: $C_FILE"
@@ -75,6 +78,7 @@ for C_FILE in $C_FILES; do
             --zon "$TMPDIR/${BASENAME}.zon" \
             --out "$TMPDIR/${BASENAME}.fuzzer.c" \
             --redef "$TMPDIR/${BASENAME}.redef.txt" \
+            --offsets "$TMPDIR/${BASENAME}.offsets" \
             -- "${EXTRA_ARGS[@]}"
     else
         "$ABSOLUTION" \
@@ -82,13 +86,19 @@ for C_FILE in $C_FILES; do
             "${INVARIANT_ARGS[@]}" \
             --zon "$TMPDIR/${BASENAME}.zon" \
             --out "$TMPDIR/${BASENAME}.fuzzer.c" \
-            --redef "$TMPDIR/${BASENAME}.redef.txt"
+            --redef "$TMPDIR/${BASENAME}.redef.txt" \
+            --offsets "$TMPDIR/${BASENAME}.offsets"
     fi
     
     # Copy the generated .zon to the test directory
     cp "$TMPDIR/${BASENAME}.zon" "$ZON_FILE"
     
     echo "  -> Created: $ZON_FILE"
+
+    if [ -f "$OFFSETS_FILE" ]; then
+        cp "$TMPDIR/${BASENAME}.offsets" "$OFFSETS_FILE"
+        echo "  -> Updated: $OFFSETS_FILE"
+    fi
 done
 
 echo "Done!"

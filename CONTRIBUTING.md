@@ -22,6 +22,7 @@ absolution/
 │   └── <test_name>/
 │       ├── <file>.c          # Test input
 │       ├── <file>.c.in       # Optional input invariant
+│       ├── <file>.c.offsets  # Optional golden input layout
 │       └── <file>.c.zon      # Golden output
 ├── scripts/
 │   ├── integration.zig       # Integration test runner (zig run scripts/integration.zig)
@@ -82,6 +83,8 @@ C code emission:
 - `emitSampler`: Generates `sample_invariant()` function
 - `emitChecker`: Generates `check_invariant()` function
 - `emitEntrypoint`: Generates `LLVMFuzzerTestOneInput()`
+- `computeInputLayout`: Maps each global to its byte offset in the fuzzer input,
+  exported as C constants and a sidecar file when `--offsets` is given
 
 ## Development Workflow
 
@@ -129,6 +132,10 @@ zig run scripts/integration.zig -- foo  # Run only tests matching "foo"
    ```bash
    zig run scripts/integration.zig
    ```
+
+To also pin the input layout, add a `<file>.c.offsets` golden. The runner always
+requests offsets but only compares that file where it exists; `gen-golden.sh`
+refreshes it under the same rule.
 
 ## Architecture Notes
 

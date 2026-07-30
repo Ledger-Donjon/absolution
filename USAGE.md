@@ -24,6 +24,8 @@ OPTIONS:
   -i, --invariant <str>    Optional invariant file (.zon).
   -z, --zon <str>          Optional: export parsed module to .zon format.
   -s, --seed <str>         Optional seed file path (default: fuzzer.seed).
+  -m, --offsets <str>      Optional input layout output path; also exports the
+                           layout as constants in the generated C.
   -e, --entry <str>        Optional harness function name (default: AbsolutionTestOneInput).
 
   <str>...                 C compiler flags after '--' (e.g. -I path -DFOO -fshort-enums).
@@ -137,6 +139,61 @@ mkdir -p corpus && cp fuzzer.seed corpus/
 
 For CMake projects, `absolution_add_fuzzer()` handles all of this automatically.
 See the [example/protocol_parser/](example/protocol_parser/) directory.
+
+## Exporting the Input Layout
+
+The generated sampler reads the fuzzer input from front to back, giving every
+global a fixed byte offset. `--offsets` publishes those offsets so a harness or
+a corpus tool can address a specific global without reading the generated
+source.
+
+Two exports are produced together:
+
+**Constants in the generated C**, so code linked against the fuzzer can read the
+layout it was actually built with:
+
+```c
+const size_t absolution_globals_size = 27;          /* total sampled prefix */
+const size_t absolution_offset_input_value = 0;     /* per global */
+const size_t absolution_offset_handlers = 4;
+```
+
+Declare what you need and let the linker supply the value; keep the declaration
+weak if the harness must also build without absolution:
+
+```c
+extern const size_t absolution_globals_size __attribute__((weak));
+extern const size_t absolution_offset_input_value __attribute__((weak));
+```
+
+**A sidecar file** at the requested path, for build scripts and corpus
+generators:
+
+```
+# absolution fuzzer input layout
+# global <offset> <bytes> <static:0|1> <offset_symbol> <name> <source_file>
+version 1
+globals_size 27
+global 0 4 0 absolution_offset_input_value input_value targets.c
+global 4 16 0 absolution_offset_handlers handlers targets.c
+global 20 7 1 absolution_offset_targets_c_cache cache targets.c
+```
+
+`offset` is relative to the start of the input, `bytes` is how many input bytes
+the global consumes, and `source_file` comes last because it may contain spaces.
+A global constrained to a single value consumes zero bytes, so it shares the
+offset of whatever follows it.
+
+A `static` global is exported under the mangled name it receives after
+`objcopy` renaming (see the `.redef` file), because that is the name it is
+reachable by once linked.
+
+Offsets describe one generation run: constraining a field changes how many bytes
+it consumes and shifts everything after it. Re-read the export after each build
+rather than caching values.
+
+For CMake projects `absolution_add_fuzzer()` always writes the sidecar and
+exposes its path as `${NAME}_OFFSETS_FILE`.
 
 ## Invariant Language
 

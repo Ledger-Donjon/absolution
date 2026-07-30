@@ -10,6 +10,7 @@ Absolution lets you specify an invariant for a program’s global state and fuzz
 4. Emit `fuzzer.c` with sampling, invariant checking, and libFuzzer entrypoint.
 5. Emit a symbol redefinition file for `objcopy` (handles `static` globals across translation units).
 6. Write an optional seed file sized to the required random bytes.
+7. Optionally export the input layout — the byte offset of every sampled global — as constants in the generated C and as a sidecar file (see [USAGE.md](USAGE.md)).
 
 ## Requirements
 
@@ -34,6 +35,7 @@ zig build -Doptimize=ReleaseFast
   --out fuzzer.c \
   --redef fuzzer.redef \
   --seed fuzzer.seed \
+  --offsets fuzzer.offsets \
   -- -I path/to/include -DMY_DEFINE=42
 
 # Compile targets, apply objcopy, link, and run

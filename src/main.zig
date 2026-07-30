@@ -56,7 +56,7 @@ pub fn main(init: std.process.Init) !void {
     const needed_bytes = seed.neededBytesFromGlobals(globals.items);
 
     // Code generation
-    try emit.writeFuzzerC(gpa, io, globals.items, needed_bytes, opts.out_c, opts.redef, opts.entry, func_symbols);
+    try emit.writeFuzzerC(gpa, io, globals.items, needed_bytes, opts.out_c, opts.redef, opts.entry, func_symbols, opts.offsets);
 
     // Optional: Save invariant to file
     if (opts.zon) |zon_path| try writeInvariant(gpa, io, globals.items, zon_path);
@@ -83,6 +83,7 @@ const Options = struct {
     out_c: []const u8,
     zon: ?[]const u8,
     seed: ?[]const u8,
+    offsets: ?[]const u8,
     entry: []const u8,
     cflags: []const []const u8,
 };
@@ -95,6 +96,8 @@ const cli = clap.parseParamsComptime(
     \\-i, --invariant <str>    Optional invariant (.in or .zon).
     \\-z, --zon <str>          Optional zon output path.
     \\-s, --seed <str>         Optional seed output path (default: fuzzer.seed).
+    \\-m, --offsets <str>      Optional input layout output path; also exports the
+    \\                         layout as constants in the generated C.
     \\-e, --entry <str>        Optional harness function name (default: AbsolutionTestOneInput).
     \\<str>...                 C compiler flags after '--' (e.g. -I path -DFOO -fshort-enums).
     \\
@@ -147,6 +150,7 @@ fn parseArgs(allocator: std.mem.Allocator, io: std.Io, args: std.process.Args) !
         .out_c = res.args.out orelse "fuzzer.c",
         .zon = res.args.zon,
         .seed = res.args.seed orelse "fuzzer.seed",
+        .offsets = res.args.offsets,
         .entry = res.args.entry orelse "AbsolutionTestOneInput",
         .cflags = cflags,
     };
