@@ -25,6 +25,10 @@ OPTIONS:
   -z, --zon <str>          Optional: export parsed module to .zon format.
   -s, --seed <str>         Optional seed file path (default: fuzzer.seed).
   -e, --entry <str>        Optional harness function name (default: AbsolutionTestOneInput).
+      --no-post-check      Do not assert check_invariant() after the harness returns.
+  -Z, --zero-symbols <str>...  Zero-symbol list(s); unmatched selectors are reported.
+      --lenient-zero-symbols <str>...  Shared zero-symbol list(s); unmatched selectors are silent.
+  -O, --domain-overrides <str>...  Override file(s); unmatched lines are fatal.
 
   <str>...                 C compiler flags after '--' (e.g. -I path -DFOO -fshort-enums).
 ```
@@ -319,7 +323,49 @@ LibFuzzer entrypoint that:
 The generated file does `#undef NDEBUG` before `<assert.h>`, so release flags
 cannot compile the check out.
 
+The post-condition assumes the harness keeps the globals inside the sampled
+domain. A harness that drives the program forward on purpose (for example a
+multi-step session started from a reset state) leaves them outside it on every
+run. Pass `--no-post-check` (CMake: `NO_POST_CHECK`) to drop the assertion.
+
 ## Tips
+
+### Zero lists and domain overrides
+
+Most projects only need a few tweaks on top of the discovered model. Instead
+of exporting, editing and re-importing a `.zon`, pass them in the same run:
+
+```bash
+absolution -t app.c -o fuzzer.c -r fuzzer.redef \
+    -Z zero-symbols.txt --lenient-zero-symbols sdk-zero-symbols.txt \
+    -O domain-overrides.txt -- -Iinclude
+```
+
+A zero list has one selector per line (`#` comments). `g_ctx` matches every
+global named `g_ctx`; `g_ctx@src/feature.c` only the one whose source path
+contains `src/feature.c`. Matched globals get one all-zero value, so they no
+longer consume input bytes.
+
+An override file has one line per field, applied after the zero lists. A
+comment takes a whole line:
+
+```
+# whole scalar global
+appState. = values \x00 \x01 \x02
+txContext.txType = values \x00 \x02
+# re-open a zeroed field
+g_ctx.metadata.op_type = top
+# every enumerator of a C enum
+G_context.state = enum app_state_t
+```
+
+The selector splits on the first dot (`g.a.b` is field `.a.b` of `g`). Values
+are byte strings with `\xNN` escapes, zero-padded to the field element size.
+`enum T` takes the enumerators of the C enum `T` (tag or typedef name) found in
+the parsed sources.
+The order is: `--invariant`, then zero lists, then overrides. `--zon` exports
+the tuned model. In CMake, pass `ZERO_SYMBOLS`, `LENIENT_ZERO_SYMBOLS` and
+`DOMAIN_OVERRIDES`; editing any of these files regenerates the driver.
 
 ### Exporting and editing invariants
 

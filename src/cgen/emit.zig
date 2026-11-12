@@ -240,6 +240,7 @@ fn emitDomainTables(io: std.Io, globals: []const Parser.Global, file: *std.Io.Fi
 
 /// Generate the complete fuzzer C file and `objcopy` redefinition file.
 /// Writes includes, extern/weak declarations, sampler, checker, and libFuzzer entrypoint.
+/// `post_check` emits the `check_invariant()` assertion after the harness call.
 pub fn writeFuzzerC(
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -249,6 +250,7 @@ pub fn writeFuzzerC(
     redef_path: []const u8,
     entry_name: []const u8,
     func_symbols: []const []const u8,
+    post_check: bool,
 ) !void {
     var file = try std.Io.Dir.cwd().createFile(io, out_path, .{ .truncate = true });
     defer file.close(io);
@@ -305,7 +307,7 @@ pub fn writeFuzzerC(
     try emitDomainTables(io, globals, &file);
     try emitSampler(allocator, io, globals, &file);
     try emitChecker(allocator, io, globals, &file);
-    try emitEntrypoint(allocator, io, &file, entry_name);
+    try emitEntrypoint(allocator, io, &file, entry_name, post_check);
 }
 
 /// Emit `sample_invariant()` — reads fuzzer input bytes and hydrates globals
@@ -773,7 +775,9 @@ fn emitChecker(allocator: std.mem.Allocator, io: std.Io, globals: []const Parser
 }
 
 /// Emit the libFuzzer entrypoint that wires sampling, harness, and checks.
-fn emitEntrypoint(allocator: std.mem.Allocator, io: std.Io, file: *std.Io.File, entry_name: []const u8) !void {
+/// Without `post_check` the harness may leave the globals outside the sampled
+/// domain (e.g. a multi-step session that drives the app forward).
+fn emitEntrypoint(allocator: std.mem.Allocator, io: std.Io, file: *std.Io.File, entry_name: []const u8, post_check: bool) !void {
     try file.writeStreamingAll(io,
         \\int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         \\    ptrdiff_t consumed = sample_invariant(data, size);
@@ -787,12 +791,20 @@ fn emitEntrypoint(allocator: std.mem.Allocator, io: std.Io, file: *std.Io.File, 
     defer allocator.free(call_line);
     try file.writeStreamingAll(io, call_line);
 
-    try file.writeStreamingAll(io,
-        \\    if (res == -1) return 0;
-        \\    assert(check_invariant() == 0);
-        \\    return 0;
-        \\}
-    );
+    if (post_check) {
+        try file.writeStreamingAll(io,
+            \\    if (res == -1) return 0;
+            \\    assert(check_invariant() == 0);
+            \\    return 0;
+            \\}
+        );
+    } else {
+        try file.writeStreamingAll(io,
+            \\    (void)res;
+            \\    return 0;
+            \\}
+        );
+    }
 }
 
 fn readTmpFile(tmp: *std.testing.TmpDir, name: []const u8, buf: []u8) ![]const u8 {
@@ -1485,13 +1497,27 @@ test "emitEntrypoint generates LLVMFuzzerTestOneInput" {
     defer tmp.cleanup();
     var file = try createTmpFile(&tmp, "t.c");
     defer file.close(io);
-    try emitEntrypoint(alloc, io, &file, "MyHarness");
+    try emitEntrypoint(alloc, io, &file, "MyHarness", true);
     var buf: [2048]u8 = undefined;
     const out = try readTmpFile(&tmp, "t.c", &buf);
     try std.testing.expect(std.mem.indexOf(u8, out, "LLVMFuzzerTestOneInput") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "sample_invariant") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "MyHarness(data, size)") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "check_invariant()") != null);
+}
+
+test "emitEntrypoint without post_check skips check_invariant" {
+    const io = std.testing.io;
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var file = try createTmpFile(&tmp, "t.c");
+    defer file.close(io);
+    try emitEntrypoint(alloc, io, &file, "MyHarness", false);
+    var buf: [2048]u8 = undefined;
+    const out = try readTmpFile(&tmp, "t.c", &buf);
+    try std.testing.expect(std.mem.indexOf(u8, out, "MyHarness(data, size)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "check_invariant()") == null);
 }
 
 test "writeFuzzerC end-to-end produces valid output" {
@@ -1530,7 +1556,7 @@ test "writeFuzzerC end-to-end produces valid output" {
         .fields = fields,
     }};
 
-    try writeFuzzerC(alloc, io, globals, 4, out_path, redef_path, "TestHarness", &.{});
+    try writeFuzzerC(alloc, io, globals, 4, out_path, redef_path, "TestHarness", &.{}, true);
 
     var buf: [16384]u8 = undefined;
     const out = try readTmpFile(&tmp, "fuzzer.c", &buf);
@@ -1570,7 +1596,7 @@ test "writeFuzzerC with static global writes redef file" {
         .fields = fields,
     }};
 
-    try writeFuzzerC(alloc, io, globals, 1, out_path, redef_path, "TestEntry", &.{});
+    try writeFuzzerC(alloc, io, globals, 1, out_path, redef_path, "TestEntry", &.{}, true);
 
     var buf: [4096]u8 = undefined;
     const redef_out = try readTmpFile(&tmp, "fuzzer2.redef", &buf);
@@ -1594,7 +1620,7 @@ test "writeFuzzerC with func_symbols emits extern declarations" {
     defer alloc.free(redef_path);
 
     const globals: []const Parser.Global = &.{};
-    try writeFuzzerC(alloc, io, globals, 0, out_path, redef_path, "Entry", &.{"my_handler"});
+    try writeFuzzerC(alloc, io, globals, 0, out_path, redef_path, "Entry", &.{"my_handler"}, true);
 
     var buf: [8192]u8 = undefined;
     const c_out = try readTmpFile(&tmp, "fuzzer3.c", &buf);
