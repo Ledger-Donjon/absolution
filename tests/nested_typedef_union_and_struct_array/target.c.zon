@@ -10,6 +10,7 @@
         .bit_width = 1920,
         .dims = .{},
         .is_padding = true,
+        .is_pointer = false,
         .domain = .top,
     }},
 }}

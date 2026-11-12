@@ -63,13 +63,19 @@ pub fn main(init: std.process.Init) !void {
     const needed_bytes = seed.neededBytesFromGlobals(globals.items);
 
     // Code generation
-    try emit.writeFuzzerC(gpa, io, globals.items, needed_bytes, opts.out_c, opts.redef, opts.entry, func_symbols, opts.post_check);
+    if (opts.symbolic != null) {
+        // Symbolic mode: reuse sample_invariant; a single symbolic input buffer
+        // feeds the constrained globals and the trailing APDU.
+        try emit.writeSymbolicC(gpa, io, globals.items, needed_bytes, opts.apdu_size, opts.out_c, opts.redef, opts.entry, func_symbols, opts.symbolic_skip_pointers, opts.post_check);
+    } else {
+        try emit.writeFuzzerC(gpa, io, globals.items, needed_bytes, opts.out_c, opts.redef, opts.entry, func_symbols, opts.post_check);
+
+        // Optional: Generate an arbitrary seed (fuzzer mode only)
+        if (opts.seed) |seed_path| try seed.writeSeed(io, seed_path, needed_bytes);
+    }
 
     // Optional: Save invariant to file
     if (opts.zon) |zon_path| try writeInvariant(gpa, io, globals.items, zon_path);
-
-    // Optional: Generate an arbitrary seed
-    if (opts.seed) |seed_path| try seed.writeSeed(io, seed_path, needed_bytes);
 }
 
 fn readAll(gpa: std.mem.Allocator, io: std.Io, arena: std.mem.Allocator, path: []const u8) ![]const u8 {
@@ -127,6 +133,9 @@ fn writeInvariant(allocator: std.mem.Allocator, io: std.Io, globals: []const Glo
     try file.writeStreamingAll(io, zon_bytes);
 }
 
+/// Symbolic-execution backend selected via `--symbolic`.
+const Engine = enum { klee };
+
 const Options = struct {
     targets: []const []const u8,
     redef: []const u8,
@@ -135,7 +144,10 @@ const Options = struct {
     zon: ?[]const u8,
     seed: ?[]const u8,
     entry: []const u8,
+    symbolic: ?Engine,
+    symbolic_skip_pointers: bool,
     post_check: bool,
+    apdu_size: usize,
     zero_symbols: []const []const u8,
     lenient_zero_symbols: []const []const u8,
     domain_overrides: []const []const u8,
@@ -145,12 +157,15 @@ const Options = struct {
 const cli = clap.parseParamsComptime(
     \\-h, --help               Show this help and exit.
     \\-t, --targets <str>...   Path to targets C translation unit(s).
-    \\-o, --out <str>          Optional Output fuzzer C path (default: fuzzer.c).
+    \\-o, --out <str>          Optional Output C path (default: fuzzer.c).
     \\-r, --redef <str>        Required redefinition file output path.
     \\-i, --invariant <str>    Optional invariant (.in or .zon).
     \\-z, --zon <str>          Optional zon output path.
     \\-s, --seed <str>         Optional seed output path (default: fuzzer.seed).
     \\-e, --entry <str>        Optional harness function name (default: AbsolutionTestOneInput).
+    \\-S, --symbolic <str>     Emit a symbolic-execution driver for the given engine: 'klee'.
+    \\-a, --apdu-size <str>    Optional symbolic APDU byte size (symbolic mode; default: 260).
+    \\-P, --no-symbolic-pointers  Symbolic mode: leave unconstrained pointer-typed globals NULL instead of symbolizing them (avoids wild-pointer path/fork blowup).
     \\--no-post-check          Do not assert check_invariant() after the harness returns (for harnesses that drive the globals out of the sampled domain, e.g. multi-step sessions).
     \\-Z, --zero-symbols <str>...  Zero-symbol list(s): matched globals get a single all-zero value. Unmatched selectors are reported.
     \\--lenient-zero-symbols <str>...  Zero-symbol list(s) shared across projects: unmatched selectors are not reported.
@@ -206,6 +221,16 @@ fn parseArgs(allocator: std.mem.Allocator, io: std.Io, args: std.process.Args) !
     const domain_overrides = try allocator.dupe([]const u8, res.args.@"domain-overrides");
     errdefer allocator.free(domain_overrides);
 
+    const apdu_size = if (res.args.@"apdu-size") |s|
+        std.fmt.parseInt(usize, s, 10) catch return printHelpAndFail(io, std.Io.File.stderr())
+    else
+        260;
+
+    const symbolic: ?Engine = if (res.args.symbolic) |s|
+        std.meta.stringToEnum(Engine, s) orelse return printHelpAndFail(io, std.Io.File.stderr())
+    else
+        null;
+
     return .{
         .targets = targets,
         .redef = redef_path,
@@ -214,7 +239,10 @@ fn parseArgs(allocator: std.mem.Allocator, io: std.Io, args: std.process.Args) !
         .zon = res.args.zon,
         .seed = res.args.seed orelse "fuzzer.seed",
         .entry = res.args.entry orelse "AbsolutionTestOneInput",
+        .symbolic = symbolic,
+        .symbolic_skip_pointers = res.args.@"no-symbolic-pointers" != 0,
         .post_check = res.args.@"no-post-check" == 0,
+        .apdu_size = apdu_size,
         .zero_symbols = zero_symbols,
         .lenient_zero_symbols = lenient_zero_symbols,
         .domain_overrides = domain_overrides,

@@ -114,6 +114,12 @@ pub const Field = struct {
     dims: []const Dimension = &.{},
     /// Whether this field is padding that must remain zeroed.
     is_padding: bool = false,
+    /// Whether the field's C type is a pointer. Symbolic engines cannot treat a
+    /// raw address as a meaningful input: a symbolic pointer forces the solver to
+    /// resolve a wild address over the whole address space (path/fork blowup) and
+    /// makes cleanup code walk garbage. The symbolic sampler can skip these
+    /// (leaving them NULL from the up-front memset) via the `skip_pointers` knob.
+    is_pointer: bool = false,
     /// Value domain.
     domain: Domain = .top,
 

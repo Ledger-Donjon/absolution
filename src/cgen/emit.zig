@@ -284,6 +284,28 @@ pub fn writeFuzzerC(
     }
     if (func_symbols.len > 0) try file.writeStreamingAll(io, "\n");
 
+    try emitGlobalStorage(allocator, io, globals, &file, &redef_file);
+
+    try file.writeStreamingAll(io, "\n");
+
+    try emitDomainTables(io, globals, &file);
+    // Fuzzer keeps sampling every field (pointers included): concrete fuzzer
+    // bytes are a valid pointer bit-pattern and the fuzz harness re-points them.
+    try emitSampler(allocator, io, globals, &file, false);
+    try emitChecker(allocator, io, globals, &file);
+    try emitEntrypoint(allocator, io, &file, entry_name, post_check);
+}
+
+/// Emit the weak global storage arrays (one per global) and, for `static`
+/// globals, the `objcopy` symbol-redefinition lines. Shared by the fuzzer and
+/// symbolic emitters.
+fn emitGlobalStorage(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    globals: []const Parser.Global,
+    file: *std.Io.File,
+    redef_file: *std.Io.File,
+) !void {
     for (globals) |g| {
         const mangled = if (g.is_static)
             try mangleName(allocator, g.source_file, g.name)
@@ -301,18 +323,87 @@ pub fn writeFuzzerC(
         defer allocator.free(decl);
         try file.writeStreamingAll(io, decl);
     }
+}
+
+/// Generate the symbolic-execution driver C file and `objcopy` redefinition
+/// file. Mirrors `writeFuzzerC` but replaces the libFuzzer entrypoint with a
+/// `main()` that marks a single input buffer symbolic and drives the reused
+/// `sample_invariant` sampler; the constrained globals and the trailing APDU
+/// bytes therefore become symbolic with the exact same domain semantics as the
+/// fuzzer. Built with `-DABSOLUTION_KLEE`, the buffer is marked symbolic with
+/// `klee_make_symbolic`.
+pub fn writeSymbolicC(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    globals: []const Parser.Global,
+    needed_bytes: usize,
+    apdu_size: usize,
+    out_path: []const u8,
+    redef_path: []const u8,
+    entry_name: []const u8,
+    func_symbols: []const []const u8,
+    skip_pointer_fields: bool,
+    post_check: bool,
+) !void {
+    var file = try std.Io.Dir.cwd().createFile(io, out_path, .{ .truncate = true });
+    defer file.close(io);
+
+    var redef_file = try std.Io.Dir.cwd().createFile(io, redef_path, .{ .truncate = true });
+    defer redef_file.close(io);
+
+    try file.writeStreamingAll(io,
+        \\/* The invariant post-condition must survive release flags (-DNDEBUG). */
+        \\#undef NDEBUG
+        \\#include <assert.h>
+        \\#include <stdint.h>
+        \\#include <stddef.h>
+        \\#include <string.h>
+        \\#include <stdio.h>
+        \\
+    );
+
+    const fwd_decl = try std.fmt.allocPrint(allocator, "int {s}(const uint8_t *data, size_t size);\n\n", .{entry_name});
+    defer allocator.free(fwd_decl);
+    try file.writeStreamingAll(io, fwd_decl);
+
+    const globals_size_define = try std.fmt.allocPrint(allocator, "#define ABSOLUTION_GLOBALS_SIZE {d}\n", .{needed_bytes});
+    defer allocator.free(globals_size_define);
+    try file.writeStreamingAll(io, globals_size_define);
+
+    const apdu_size_define = try std.fmt.allocPrint(allocator, "#define ABSOLUTION_APDU_SIZE {d}\n\n", .{apdu_size});
+    defer allocator.free(apdu_size_define);
+    try file.writeStreamingAll(io, apdu_size_define);
+
+    for (func_symbols) |sym| {
+        const func_decl = try std.fmt.allocPrint(allocator, "extern void {s}(void);\n", .{sym});
+        defer allocator.free(func_decl);
+        try file.writeStreamingAll(io, func_decl);
+    }
+    if (func_symbols.len > 0) try file.writeStreamingAll(io, "\n");
+
+    try emitGlobalStorage(allocator, io, globals, &file, &redef_file);
 
     try file.writeStreamingAll(io, "\n");
 
     try emitDomainTables(io, globals, &file);
-    try emitSampler(allocator, io, globals, &file);
+    try emitSampler(allocator, io, globals, &file, skip_pointer_fields);
     try emitChecker(allocator, io, globals, &file);
-    try emitEntrypoint(allocator, io, &file, entry_name, post_check);
+    try emitSymbolicEntrypoint(allocator, io, &file, entry_name, post_check);
 }
 
 /// Emit `sample_invariant()` — reads fuzzer input bytes and hydrates globals
 /// according to their field domains (top, values, or pointers).
-fn emitSampler(allocator: std.mem.Allocator, io: std.Io, globals: []const Parser.Global, file: *std.Io.File) !void {
+///
+/// When `skip_pointers` is set, pointer-typed fields left unconstrained (domain
+/// `.top`) are NOT sampled: they keep the NULL from the up-front memset instead
+/// of receiving raw input bytes. This is for symbolic engines, where a symbolic
+/// address is never a meaningful input (it forces the solver to resolve a wild
+/// pointer over the whole address space and makes app cleanup walk garbage).
+/// Their input bytes are still skipped, so the input layout stays the fuzzer
+/// driver's: a symbolic test case replays on the fuzzer build unchanged.
+/// Explicitly-constrained pointer sets (domain `.pointers`) are still sampled,
+/// since those pick from valid, named targets.
+fn emitSampler(allocator: std.mem.Allocator, io: std.Io, globals: []const Parser.Global, file: *std.Io.File, skip_pointers: bool) !void {
     var num_buf: [64]u8 = undefined;
     var bytes_buf: [64]u8 = undefined;
 
@@ -350,6 +441,10 @@ fn emitSampler(allocator: std.mem.Allocator, io: std.Io, globals: []const Parser
 
         for (g.fields) |f| {
             if (f.is_padding) continue;
+            // Symbolic mode: leave unconstrained pointer-typed fields NULL (see
+            // emitSampler doc). They are already zeroed by the memset above, so
+            // only their input bytes are skipped.
+            const leave_null = skip_pointers and f.is_pointer and f.domain == .top;
             const bytes = (f.bit_width + 7) / 8;
             const bytes_str = try std.fmt.bufPrint(&bytes_buf, "{d}", .{bytes});
 
@@ -443,7 +538,7 @@ fn emitSampler(allocator: std.mem.Allocator, io: std.Io, globals: []const Parser
             const current_depth = loop_stack.depth();
             switch (f.domain) {
                 .top => {
-                    try emitMemcpy(io, file, current_depth, dst_expr, "&data[off]", bytes_str);
+                    if (!leave_null) try emitMemcpy(io, file, current_depth, dst_expr, "&data[off]", bytes_str);
                     try incrementOffset(io, file, current_depth, bytes_str);
                 },
                 .values => |vals| {
@@ -807,6 +902,81 @@ fn emitEntrypoint(allocator: std.mem.Allocator, io: std.Io, file: *std.Io.File, 
     }
 }
 
+/// Emit the symbolic-execution entrypoint. Mirrors the fuzzer split of
+/// runtime `main` vs. `LLVMFuzzerTestOneInput`: absolution emits
+/// `AbsolutionSymbolicTestOneInput()` (the analysis body) plus a thin process
+/// `main()` that just calls it. The body marks a global input buffer symbolic
+/// (`klee_make_symbolic` under `-DABSOLUTION_KLEE`; a plain build reads it from
+/// stdin instead), reuses `sample_invariant` to hydrate the constrained globals,
+/// then passes the trailing (symbolic) APDU bytes to the harness.
+fn emitSymbolicEntrypoint(allocator: std.mem.Allocator, io: std.Io, file: *std.Io.File, entry_name: []const u8, post_check: bool) !void {
+    try file.writeStreamingAll(io,
+        \\#if defined(ABSOLUTION_KLEE)
+        \\void klee_make_symbolic(void *addr, unsigned long nbytes, const char *name);
+        \\#define SYM_MAKE_SYMBOLIC(p, n) klee_make_symbolic((p), (n), "absolution_sym_input")
+        \\#else
+        \\#define SYM_MAKE_SYMBOLIC(p, n) ((void)0)   /* plain replay/ASan build: seed only */
+        \\#endif
+        \\
+        \\uint8_t absolution_sym_input[ABSOLUTION_GLOBALS_SIZE + ABSOLUTION_APDU_SIZE];
+        \\
+        \\#if !defined(ABSOLUTION_KLEE)
+        \\/* A plain build reads the input from stdin, so a test case replays natively
+        \\ * (e.g. under ASan) via `./driver < input`. KLEE needs no seed:
+        \\ * klee_make_symbolic marks the buffer directly. */
+        \\static void absolution_load_seed(void) {
+        \\    size_t n = fread(absolution_sym_input, 1, sizeof(absolution_sym_input), stdin);
+        \\    (void)n;
+        \\}
+        \\#endif
+        \\
+        \\/* Runs once the input is symbolic, before sample_invariant() copies the
+        \\ * prefix into the globals: whatever the harness constrains or
+        \\ * concretizes here, the globals see too. Weak: a harness may define it. */
+        \\__attribute__((weak))
+        \\void absolution_sym_prepare(uint8_t *input, size_t globals_size, size_t apdu_size) {
+        \\    (void)input;
+        \\    (void)globals_size;
+        \\    (void)apdu_size;
+        \\}
+        \\
+        \\/* Absolution-generated symbolic analysis entry (the symbolic-mode
+        \\ * analogue of the libFuzzer test callback), called by main() below. */
+        \\void AbsolutionSymbolicTestOneInput(void) {
+        \\#if !defined(ABSOLUTION_KLEE)
+        \\    absolution_load_seed();
+        \\#endif
+        \\    SYM_MAKE_SYMBOLIC(absolution_sym_input, sizeof(absolution_sym_input));
+        \\    absolution_sym_prepare(absolution_sym_input, ABSOLUTION_GLOBALS_SIZE, ABSOLUTION_APDU_SIZE);
+        \\    ptrdiff_t consumed = sample_invariant(absolution_sym_input, sizeof(absolution_sym_input));
+        \\    if (consumed < 0) return;
+        \\
+    );
+
+    const call_line = try std.fmt.allocPrint(allocator, "    int res = {s}(absolution_sym_input + (size_t)consumed, ABSOLUTION_APDU_SIZE);\n", .{entry_name});
+    defer allocator.free(call_line);
+    try file.writeStreamingAll(io, call_line);
+
+    if (post_check) {
+        try file.writeStreamingAll(io,
+            \\    /* Same post-condition as the fuzzer entry: -1 means the input was
+            \\     * rejected before the app state could change. */
+            \\    if (res != -1) assert(check_invariant() == 0);
+            \\
+        );
+    } else {
+        try file.writeStreamingAll(io, "    (void)res;\n");
+    }
+    try file.writeStreamingAll(io,
+        \\}
+        \\
+        \\int main(void) {
+        \\    AbsolutionSymbolicTestOneInput();
+        \\    return 0;
+        \\}
+    );
+}
+
 fn readTmpFile(tmp: *std.testing.TmpDir, name: []const u8, buf: []u8) ![]const u8 {
     const tio = std.testing.io;
     var f = try tmp.dir.openFile(tio, name, .{});
@@ -1066,7 +1236,7 @@ test "emitSampler generates sample_invariant for .top field" {
         .dims = &.{},
         .fields = fields,
     }};
-    try emitSampler(alloc, io, globals, &file);
+    try emitSampler(alloc, io, globals, &file, false);
     var buf: [4096]u8 = undefined;
     const out = try readTmpFile(&tmp, "t.c", &buf);
     try std.testing.expect(std.mem.indexOf(u8, out, "sample_invariant") != null);
@@ -1097,7 +1267,7 @@ test "emitSampler with .values domain" {
         .dims = &.{},
         .fields = fields,
     }};
-    try emitSampler(alloc, io, globals, &file);
+    try emitSampler(alloc, io, globals, &file, false);
     var buf: [4096]u8 = undefined;
     const out = try readTmpFile(&tmp, "t.c", &buf);
     try std.testing.expect(std.mem.indexOf(u8, out, "idx_FM_VAL_0 = data[off] % 2") != null);
@@ -1126,7 +1296,7 @@ test "emitSampler with .whole_values multi-candidate" {
         .dims = &.{},
         .fields = fields,
     }};
-    try emitSampler(alloc, io, globals, &file);
+    try emitSampler(alloc, io, globals, &file, false);
     var buf: [8192]u8 = undefined;
     const out = try readTmpFile(&tmp, "t.c", &buf);
     try std.testing.expect(std.mem.indexOf(u8, out, "idx_FM_WVAL_0 = data[off] % 2") != null);
@@ -1159,7 +1329,7 @@ test "emitSampler with .whole_values singleton uses no selector byte" {
         .dims = &.{},
         .fields = fields,
     }};
-    try emitSampler(alloc, io, globals, &file);
+    try emitSampler(alloc, io, globals, &file, false);
     var buf: [8192]u8 = undefined;
     const out = try readTmpFile(&tmp, "t.c", &buf);
     try std.testing.expect(std.mem.indexOf(u8, out, "&FM_WVAL_0[0]") != null);
@@ -1189,7 +1359,7 @@ test "emitSampler with strided .whole_values scatters elements" {
         .dims = &.{},
         .fields = fields,
     }};
-    try emitSampler(alloc, io, globals, &file);
+    try emitSampler(alloc, io, globals, &file, false);
     var buf: [8192]u8 = undefined;
     const out = try readTmpFile(&tmp, "t.c", &buf);
     try std.testing.expect(std.mem.indexOf(u8, out, "idx_FM_WVAL_0 = data[off] % 2") != null);
@@ -1220,7 +1390,7 @@ test "emitSampler with strided .whole_values singleton scatters without selector
         .dims = &.{},
         .fields = fields,
     }};
-    try emitSampler(alloc, io, globals, &file);
+    try emitSampler(alloc, io, globals, &file, false);
     var buf: [8192]u8 = undefined;
     const out = try readTmpFile(&tmp, "t.c", &buf);
     try std.testing.expect(std.mem.indexOf(u8, out, "for (size_t i0 = 0; i0 < 4; i0++)") != null);
@@ -1250,11 +1420,83 @@ test "emitSampler with .pointers domain" {
         .dims = &.{},
         .fields = fields,
     }};
-    try emitSampler(alloc, io, globals, &file);
+    try emitSampler(alloc, io, globals, &file, false);
     var buf: [4096]u8 = undefined;
     const out = try readTmpFile(&tmp, "t.c", &buf);
     try std.testing.expect(std.mem.indexOf(u8, out, "&FM_PTR_0[0]") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "idx_FM_PTR_0") == null);
+}
+
+test "emitSampler skips pointer-typed .top field when skip_pointers set" {
+    const io = std.testing.io;
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const fields: []Parser.Field = @constCast(&[_]Parser.Field{.{
+        .name = ".p",
+        .bit_width = 64,
+        .is_padding = false,
+        .is_pointer = true,
+        .domain = .top,
+    }});
+    const globals: []const Parser.Global = &.{.{
+        .name = "g",
+        .source_file = "",
+        .size_bytes = 8,
+        .is_static = false,
+        .dims = &.{},
+        .fields = fields,
+    }};
+
+    // skip_pointers = true: field must be left NULL (memset only, no memcpy),
+    // but its 8 input bytes are still skipped so the layout matches.
+    var file_skip = try createTmpFile(&tmp, "skip.c");
+    defer file_skip.close(io);
+    try emitSampler(alloc, io, globals, &file_skip, true);
+    var buf_skip: [4096]u8 = undefined;
+    const out_skip = try readTmpFile(&tmp, "skip.c", &buf_skip);
+    try std.testing.expect(std.mem.indexOf(u8, out_skip, "memset(g, 0, sizeof(g))") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out_skip, "memcpy") == null);
+    try std.testing.expect(std.mem.indexOf(u8, out_skip, "off += 8;") != null);
+
+    // skip_pointers = false: pointer field is sampled like any .top field.
+    var file_keep = try createTmpFile(&tmp, "keep.c");
+    defer file_keep.close(io);
+    try emitSampler(alloc, io, globals, &file_keep, false);
+    var buf_keep: [4096]u8 = undefined;
+    const out_keep = try readTmpFile(&tmp, "keep.c", &buf_keep);
+    try std.testing.expect(std.mem.indexOf(u8, out_keep, "memcpy(&g[0], &data[off], 8)") != null);
+}
+
+test "emitSampler keeps constrained .pointers field even when skip_pointers set" {
+    const io = std.testing.io;
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const fields: []Parser.Field = @constCast(&[_]Parser.Field{.{
+        .name = ".fp",
+        .bit_width = 64,
+        .is_padding = false,
+        .is_pointer = true,
+        .domain = .{ .pointers = &.{"handler_a"} },
+    }});
+    const globals: []const Parser.Global = &.{.{
+        .name = "g",
+        .source_file = "",
+        .size_bytes = 8,
+        .is_static = false,
+        .dims = &.{},
+        .fields = fields,
+    }};
+    var file = try createTmpFile(&tmp, "t.c");
+    defer file.close(io);
+    try emitSampler(alloc, io, globals, &file, true);
+    var buf: [4096]u8 = undefined;
+    const out = try readTmpFile(&tmp, "t.c", &buf);
+    // Explicit valid-target pointer sets are still sampled.
+    try std.testing.expect(std.mem.indexOf(u8, out, "&FM_PTR_0[0]") != null);
 }
 
 test "emitSampler skips padding fields" {
@@ -1278,7 +1520,7 @@ test "emitSampler skips padding fields" {
         .dims = &.{},
         .fields = fields,
     }};
-    try emitSampler(alloc, io, globals, &file);
+    try emitSampler(alloc, io, globals, &file, false);
     var buf: [4096]u8 = undefined;
     const out = try readTmpFile(&tmp, "t.c", &buf);
     try std.testing.expect(std.mem.indexOf(u8, out, "memcpy") == null);
@@ -1305,7 +1547,7 @@ test "emitSampler with static global uses mangled name" {
         .dims = &.{},
         .fields = fields,
     }};
-    try emitSampler(alloc, io, globals, &file);
+    try emitSampler(alloc, io, globals, &file, false);
     var buf: [4096]u8 = undefined;
     const out = try readTmpFile(&tmp, "t.c", &buf);
     try std.testing.expect(std.mem.indexOf(u8, out, "src_a_c_var") != null);
@@ -1648,7 +1890,7 @@ test "emitSampler with global array dims opens loops" {
         .dims = &.{.{ .len = 10, .stride_bytes = 3 }},
         .fields = fields,
     }};
-    try emitSampler(alloc, io, globals, &file);
+    try emitSampler(alloc, io, globals, &file, false);
     var buf: [4096]u8 = undefined;
     const out = try readTmpFile(&tmp, "t.c", &buf);
     try std.testing.expect(std.mem.indexOf(u8, out, "for (size_t i0 = 0; i0 < 10; i0++)") != null);
@@ -1679,4 +1921,118 @@ test "emitChecker with global array dims opens loops" {
     var buf: [4096]u8 = undefined;
     const out = try readTmpFile(&tmp, "t.c", &buf);
     try std.testing.expect(std.mem.indexOf(u8, out, "for (size_t i0 = 0; i0 < 10; i0++)") != null);
+}
+
+// ---------------------------------------------------------------------------
+// Symbolic-execution emitter tests
+// ---------------------------------------------------------------------------
+
+test "emitSymbolicEntrypoint generates main + klee_make_symbolic" {
+    const io = std.testing.io;
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var file = try createTmpFile(&tmp, "t.c");
+    defer file.close(io);
+    try emitSymbolicEntrypoint(alloc, io, &file, "MyHarness", true);
+    var buf: [8192]u8 = undefined;
+    const out = try readTmpFile(&tmp, "t.c", &buf);
+    try std.testing.expect(std.mem.indexOf(u8, out, "void AbsolutionSymbolicTestOneInput(void)") != null);
+    // The hook must run before the globals are sampled from the prefix.
+    const prepare = std.mem.indexOf(u8, out, "    absolution_sym_prepare(absolution_sym_input").?;
+    const sample = std.mem.indexOf(u8, out, "sample_invariant(absolution_sym_input").?;
+    try std.testing.expect(prepare < sample);
+    try std.testing.expect(std.mem.indexOf(u8, out, "int main(void)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "#if defined(ABSOLUTION_KLEE)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "klee_make_symbolic((p), (n), \"absolution_sym_input\")") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "absolution_sym_input") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "sample_invariant") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "int res = MyHarness(absolution_sym_input + (size_t)consumed, ABSOLUTION_APDU_SIZE)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "if (res != -1) assert(check_invariant() == 0);") != null);
+}
+
+test "writeSymbolicC end-to-end produces valid output" {
+    const io = std.testing.io;
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir_path = try std.fs.path.join(alloc, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer alloc.free(dir_path);
+    const out_path = try std.fs.path.join(alloc, &.{ dir_path, "symbolic.c" });
+    defer alloc.free(out_path);
+    const redef_path = try std.fs.path.join(alloc, &.{ dir_path, "symbolic.redef" });
+    defer alloc.free(redef_path);
+
+    const fields: []Parser.Field = @constCast(&[_]Parser.Field{
+        .{
+            .name = ".x",
+            .bit_width = 32,
+            .is_padding = false,
+            .domain = .top,
+        },
+        .{
+            .name = ".pad0",
+            .offset_bits = 32,
+            .bit_width = 32,
+            .is_padding = true,
+            .domain = .top,
+        },
+    });
+    const globals: []const Parser.Global = &.{.{
+        .name = "g",
+        .source_file = "",
+        .size_bytes = 8,
+        .is_static = false,
+        .dims = &.{},
+        .fields = fields,
+    }};
+
+    try writeSymbolicC(alloc, io, globals, 4, 260, out_path, redef_path, "TestHarness", &.{}, false, true);
+
+    var buf: [16384]u8 = undefined;
+    const out = try readTmpFile(&tmp, "symbolic.c", &buf);
+    try std.testing.expect(std.mem.indexOf(u8, out, "int TestHarness(const uint8_t *data, size_t size)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "#define ABSOLUTION_GLOBALS_SIZE 4") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "#define ABSOLUTION_APDU_SIZE 260") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "uint8_t __attribute__((weak)) g[8]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "sample_invariant") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "absolution_sym_input") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "int main(void)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "#undef NDEBUG\n#include <assert.h>") != null);
+    // No libFuzzer entrypoint in symbolic mode.
+    try std.testing.expect(std.mem.indexOf(u8, out, "LLVMFuzzerTestOneInput") == null);
+}
+
+test "writeSymbolicC with static global writes redef file" {
+    const io = std.testing.io;
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir_path = try std.fs.path.join(alloc, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer alloc.free(dir_path);
+    const out_path = try std.fs.path.join(alloc, &.{ dir_path, "symbolic2.c" });
+    defer alloc.free(out_path);
+    const redef_path = try std.fs.path.join(alloc, &.{ dir_path, "symbolic2.redef" });
+    defer alloc.free(redef_path);
+
+    const fields: []Parser.Field = @constCast(&[_]Parser.Field{.{
+        .name = ".x",
+        .bit_width = 8,
+        .is_padding = false,
+        .domain = .top,
+    }});
+    const globals: []const Parser.Global = &.{.{
+        .name = "cfg",
+        .source_file = "src/mod.c",
+        .size_bytes = 1,
+        .is_static = true,
+        .dims = &.{},
+        .fields = fields,
+    }};
+
+    try writeSymbolicC(alloc, io, globals, 1, 64, out_path, redef_path, "TestEntry", &.{}, false, false);
+
+    var buf: [4096]u8 = undefined;
+    const redef_out = try readTmpFile(&tmp, "symbolic2.redef", &buf);
+    try std.testing.expect(std.mem.indexOf(u8, redef_out, "src/mod.c cfg src_mod_c_cfg") != null);
 }
