@@ -25,6 +25,9 @@ OPTIONS:
   -z, --zon <str>          Optional: export parsed module to .zon format.
   -s, --seed <str>         Optional seed file path (default: fuzzer.seed).
   -e, --entry <str>        Optional harness function name (default: AbsolutionTestOneInput).
+  -S, --symbolic <str>     Emit a symbolic-execution driver for the given engine: 'klee'.
+  -a, --apdu-size <str>    Optional symbolic APDU byte size (symbolic mode; default: 260).
+  -P, --no-symbolic-pointers  Symbolic mode: leave unconstrained pointer globals NULL.
       --no-post-check      Do not assert check_invariant() after the harness returns.
   -Z, --zero-symbols <str>...  Zero-symbol list(s); unmatched selectors are reported.
       --lenient-zero-symbols <str>...  Shared zero-symbol list(s); unmatched selectors are silent.
@@ -320,8 +323,9 @@ LibFuzzer entrypoint that:
    given to `--entry`) with remaining bytes
 3. Calls `check_invariant` unless harness returned `-1`
 
-The generated file does `#undef NDEBUG` before `<assert.h>`, so release flags
-cannot compile the check out.
+The symbolic driver (`AbsolutionSymbolicTestOneInput`) applies the same
+post-condition. Both files `#undef NDEBUG` before `<assert.h>`, so release
+flags cannot compile the check out.
 
 The post-condition assumes the harness keeps the globals inside the sampled
 domain. A harness that drives the program forward on purpose (for example a
@@ -444,6 +448,121 @@ absolution_add_fuzzer(
 ```
 
 See [example/protocol_parser/](example/protocol_parser/) for a complete working example.
+
+## Symbolic execution (KLEE)
+
+With `--symbolic klee`, absolution emits a symbolic-execution driver instead of
+a libFuzzer harness. The driver reuses the same `sample_invariant()` sampler,
+so every domain constraint (`.top`, `.values`, `.whole_values`, `.pointers`)
+applies symbolically. Two things become symbolic:
+
+1. **The constrained globals**, hydrated by `sample_invariant()` from the
+   prefix of a symbolic input buffer, so enum/state fields stay within their
+   `.values` sets while `top` fields are fully symbolic.
+2. **The APDU**, the trailing bytes of that buffer, passed to your existing
+   harness as `entry(data, size)`.
+
+The driver mirrors the fuzzer's split of a runtime `main` and a test callback:
+`AbsolutionSymbolicTestOneInput()` is the analysis body and a thin `main()`
+calls it. The body marks the global buffer `absolution_sym_input` symbolic
+(`klee_make_symbolic` under `-DABSOLUTION_KLEE`), runs the sampler, and forwards
+the trailing APDU bytes to your harness. Built without `-DABSOLUTION_KLEE`, the
+driver reads the buffer from stdin instead, so a test case replays natively
+(`./driver < input`).
+
+The buffer has the fuzzer driver's input layout: a KLEE test case replays on
+the libFuzzer build unchanged, so it can be triaged with the fuzzer binary.
+
+```text
+  absolution_sym_input[]        symbolic, GLOBALS_SIZE + APDU_SIZE bytes
+     |
+     v
+  AbsolutionSymbolicTestOneInput()
+     |  absolution_sym_prepare(input, GLOBALS_SIZE, APDU_SIZE)   weak, no-op
+     |  sample_invariant(input, size)     prefix -> globals, within domains
+     v
+  entry(input + consumed, APDU_SIZE)      your harness, real app code;
+     |                                    KLEE forks on every symbolic branch
+     v
+  check_invariant()                       post-condition (unless --no-post-check)
+```
+
+### Preparing the input before sampling
+
+Between `SYM_MAKE_SYMBOLIC` and `sample_invariant()`, the driver calls
+`void absolution_sym_prepare(uint8_t *input, size_t globals_size, size_t apdu_size)`.
+The driver's own definition is weak and does nothing. A harness that defines it
+can constrain or concretize bytes of `absolution_sym_input` there (for example
+with `klee_assume()`), and the globals sampled next see the result: a byte fixed
+later, in the harness entry, would leave the globals holding expressions over the
+symbolic byte. The Ledger SDK harness uses it under KLEE to replay a seed
+concretely except the bytes a second seed object, a byte mask, names
+(`LEDGER_SYM_SEED_MASKS`).
+
+### Generate
+
+```bash
+absolution \
+  -t src/decoder.c -t src/session.c \
+  --symbolic klee \
+  --out symbolic.c \
+  --redef symbolic.redef \
+  --apdu-size 260 \
+  --entry FuzzDecode \
+  -- -I include/
+```
+
+This writes `symbolic.c` (the driver) and `symbolic.redef` (static-symbol
+redefinitions, applied as in the fuzzer flow). No seed file is produced in
+symbolic mode. `-P` (`--no-symbolic-pointers`) leaves unconstrained
+pointer-typed globals NULL: a symbolic address makes KLEE resolve a wild
+pointer over the whole address space.
+
+### CMake: `absolution_add_symbolic_target()`
+
+The symbolic sibling of `absolution_add_fuzzer()` takes the same `TARGETS`,
+`HARNESS`, `ENTRY`, `INVARIANT`, zero lists and overrides, and builds one LLVM
+bitcode module for KLEE:
+
+```cmake
+absolution_add_symbolic_target(
+    NAME sym_decode
+    TARGETS src/decoder.c src/session.c
+    HARNESS fuzz/fuzz_decode.c
+    ENTRY   FuzzDecode
+    APDU_SIZE 300
+    LINK_LIBRARIES protocol
+    BITCODE_TOOLCHAIN_BIN /path/to/clang+llvm-13/bin   # KLEE 3.x reads LLVM 13
+)
+```
+
+```bash
+cmake --build build --target sym_decode        # driver + sym_decode.bc
+cmake --build build --target sym_decode_klee   # run KLEE, list its error paths
+```
+
+The build compiles every TU to bitcode with `-DABSOLUTION_KLEE`, applies the
+`.redef` renames at the IR level (`llvm-objcopy` cannot edit bitcode), and links
+with `llvm-link`. The main options (full list in
+[cmake/AbsolutionSymbolic.cmake](cmake/AbsolutionSymbolic.cmake)):
+
+- `UBSAN`: instrument the app with `-fsanitize=undefined` and link abort-on-UB
+  stubs, so undefined behavior becomes a KLEE error path. `CONV_FILES` adds the
+  implicit-conversion checks, on the named files only.
+- `ALLOC_SHIM`: replace the Ledger SDK allocator with a malloc-backed shim, so a
+  symbolic value reaching the heap does not stall the solver.
+- `SKIP_POINTERS` and `NO_POST_CHECK`: same as `-P` and `--no-post-check`.
+- `KLEE_MAX_TIME`, `KLEE_JOBS`, `KLEE_SEED_SLICE`, `KLEE_ARGS` and
+  `KLEE_COMMAND`: the time budget, the number of KLEE processes run side by side
+  (`@JOB@` in `KLEE_ARGS` becomes the job number, e.g. for one seed directory
+  per job), a per-seed time slice, extra flags and the launcher.
+
+A run that ends at its time budget is a normal end. The `_klee` target then
+lists every `*.err` file under `klee_out/` (one subdirectory per job); each has
+a matching `*.ktest` with the concrete input. It fails only when no KLEE job
+started.
+
+See [example/protocol_parser/](example/protocol_parser/) for a working example.
 
 ## Limitations
 

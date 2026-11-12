@@ -10,6 +10,7 @@
         .bit_width = 8,
         .dims = .{.{ .len = 8, .stride_bytes = 1 }},
         .is_padding = false,
+        .is_pointer = false,
         .domain = .{ .whole_values = .{ "\x00\x01\x02\x03\x04\x05\x06\x07", "\xf8\xf9\xfa\xfb\xfc\xfd\xfe\xff" } },
     }},
 }}

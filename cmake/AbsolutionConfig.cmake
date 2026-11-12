@@ -6,7 +6,9 @@
 #   ABSOLUTION_OBJCOPY     — path to objcopy / llvm-objcopy
 #   Absolution_FOUND       — TRUE
 #
-# And the function absolution_add_fuzzer() is available (see AbsolutionFuzzer.cmake).
+# And these functions are available:
+#   absolution_add_fuzzer()           — see AbsolutionFuzzer.cmake
+#   absolution_add_symbolic_target()  — see AbsolutionSymbolic.cmake
 
 find_program(ABSOLUTION_EXECUTABLE absolution
     HINTS "${CMAKE_CURRENT_LIST_DIR}/../../../bin"
@@ -29,5 +31,6 @@ endif()
 set(_ABSOLUTION_MODULE_DIR "${CMAKE_CURRENT_LIST_DIR}")
 
 include("${CMAKE_CURRENT_LIST_DIR}/AbsolutionFuzzer.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/AbsolutionSymbolic.cmake")
 
 set(Absolution_FOUND TRUE)
