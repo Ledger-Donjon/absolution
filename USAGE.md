@@ -316,6 +316,9 @@ LibFuzzer entrypoint that:
    given to `--entry`) with remaining bytes
 3. Calls `check_invariant` unless harness returned `-1`
 
+The generated file does `#undef NDEBUG` before `<assert.h>`, so release flags
+cannot compile the check out.
+
 ## Tips
 
 ### Exporting and editing invariants

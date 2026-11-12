@@ -150,6 +150,29 @@ function(_absolution_collect_all
     set(${_visited}         "${_vis}"   PARENT_SCOPE)
 endfunction()
 
+# ── Objects the OBJECT library will produce ─────────────────────────────────
+# $<TARGET_OBJECTS> is only known at generate time, but the renamed copies the
+# fuzzer links must be named at configure time: count the sources that compile
+# (an enabled language's extension, not HEADER_FILE_ONLY). ApplyRedef.cmake
+# checks this count against the real object list.
+function(_absolution_compiled_count _sources _out)
+    get_property(_langs GLOBAL PROPERTY ENABLED_LANGUAGES)
+    set(_exts "")
+    foreach(_lang ${_langs})
+        list(APPEND _exts ${CMAKE_${_lang}_SOURCE_FILE_EXTENSIONS})
+    endforeach()
+    set(_n 0)
+    foreach(_s ${_sources})
+        get_filename_component(_ext "${_s}" LAST_EXT)
+        string(SUBSTRING "${_ext}" 1 -1 _ext)
+        get_source_file_property(_hdr "${_s}" HEADER_FILE_ONLY)
+        if(_ext IN_LIST _exts AND NOT _hdr)
+            math(EXPR _n "${_n} + 1")
+        endif()
+    endforeach()
+    set(${_out} ${_n} PARENT_SCOPE)
+endfunction()
+
 function(absolution_add_fuzzer)
     cmake_parse_arguments(
         FUZZ
@@ -287,7 +310,7 @@ $<JOIN:$<TARGET_PROPERTY:${_OBJ_LIB},COMPILE_OPTIONS>,\n>
             "-DFLAGS_FILE=${_FLAGS_FILE}"
             "-DWORK_DIR=${CMAKE_SOURCE_DIR}"
             -P "${_ABSOLUTION_MODULE_DIR}/RunAbsolution.cmake"
-        DEPENDS ${_ABS_TARGETS} $<TARGET_OBJECTS:${_OBJ_LIB}> "${_FLAGS_FILE}" "${_TARGETS_FILE}"
+        DEPENDS "${ABSOLUTION_EXECUTABLE}" ${_ABS_TARGETS} $<TARGET_OBJECTS:${_OBJ_LIB}> "${_FLAGS_FILE}" "${_TARGETS_FILE}"
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
         COMMENT "[absolution] Generating harness for ${FUZZ_NAME}"
         VERBATIM
@@ -317,17 +340,31 @@ $<JOIN:$<TARGET_PROPERTY:${_OBJ_LIB},COMPILE_OPTIONS>,\n>
     endforeach()
 
     # ── Step 3: Apply symbol redefinitions — incremental via stamp file ───────
+    # The fuzzer links renamed copies (_REDEF_OBJ_DIR/<N>.o), so the compiled
+    # objects stay as the compiler wrote them and nothing recompiles.
     set(_REDEF_TARGET "${FUZZ_NAME}_redef")
+    set(_REDEF_OBJ_DIR "${_FUZZ_DIR}/redef_objs")
+    _absolution_compiled_count("${_ABS_TARGETS}" _obj_count)
+    set(_redef_objs "")
+    if(_obj_count GREATER 0)
+        math(EXPR _last "${_obj_count} - 1")
+        foreach(_i RANGE ${_last})
+            list(APPEND _redef_objs "${_REDEF_OBJ_DIR}/${_i}.o")
+        endforeach()
+    endif()
 
     add_custom_command(
         OUTPUT  "${_REDEF_STAMP}"
+        BYPRODUCTS ${_redef_objs}
         COMMAND "${CMAKE_COMMAND}"
             "-DREDEF_FILE=${_REDEF_FILE}"
             "-DOBJ_LIST_FILE=${_OBJ_LIST}"
             "-DOBJCOPY=${ABSOLUTION_OBJCOPY}"
+            "-DOUT_DIR=${_REDEF_OBJ_DIR}"
+            "-DEXPECTED_COUNT=${_obj_count}"
             -P "${_ABSOLUTION_MODULE_DIR}/ApplyRedef.cmake"
         COMMAND "${CMAKE_COMMAND}" -E touch "${_REDEF_STAMP}"
-        DEPENDS "${_REDEF_FILE}" "${_OBJ_LIST}"
+        DEPENDS "${_REDEF_FILE}" "${_OBJ_LIST}" $<TARGET_OBJECTS:${_OBJ_LIB}>
         WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
         COMMENT "[absolution] Applying symbol redefinitions for ${FUZZ_NAME}"
         VERBATIM
@@ -348,7 +385,8 @@ $<JOIN:$<TARGET_PROPERTY:${_OBJ_LIB},COMPILE_OPTIONS>,\n>
     target_compile_options(${FUZZ_NAME} PRIVATE -g "-fsanitize=${FUZZ_SANITIZERS}")
     target_link_options(${FUZZ_NAME}    PRIVATE    "-fsanitize=${FUZZ_SANITIZERS}")
 
-    target_sources(${FUZZ_NAME} PRIVATE $<TARGET_OBJECTS:${_OBJ_LIB}>)
+    set_source_files_properties(${_redef_objs} PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
+    target_sources(${FUZZ_NAME} PRIVATE ${_redef_objs})
 
     if(_absorbed_targets)
         target_link_options(${FUZZ_NAME} PRIVATE "LINKER:--allow-multiple-definition")

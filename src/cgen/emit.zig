@@ -257,6 +257,8 @@ pub fn writeFuzzerC(
     defer redef_file.close(io);
 
     try file.writeStreamingAll(io,
+        \\/* The invariant post-condition must survive release flags (-DNDEBUG). */
+        \\#undef NDEBUG
         \\#include <assert.h>
         \\#include <stdint.h>
         \\#include <stddef.h>
