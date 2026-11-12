@@ -192,10 +192,7 @@ fn addMainFromPaths(p: *Parser, paths: []const []const u8) !aro.Source {
         try unity_buf.appendSlice(p.gpa, path);
         try unity_buf.appendSlice(p.gpa, "\"\n");
     }
-    return p.toolchain.driver.comp.addSourceFromBuffer(
-        "<absolution-unity>",
-        try unity_buf.toOwnedSlice(p.gpa),
-    );
+    return p.toolchain.driver.comp.addSourceFromBuffer("<absolution-unity>", unity_buf.items);
 }
 
 /// Collect globals from every target file.
