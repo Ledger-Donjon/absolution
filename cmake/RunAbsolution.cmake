@@ -8,6 +8,9 @@
 #   SEED         — output .seed path
 #   ENTRY        — entry function name
 #   INVARIANT    — (optional) invariant file path
+#   ZERO_SYMBOLS / LENIENT_ZERO_SYMBOLS / DOMAIN_OVERRIDES
+#                — (optional) comma-joined file lists
+#   NO_POST_CHECK— (optional) TRUE to pass --no-post-check
 #   FLAGS_FILE   — one compiler flag per line (-Ipath, -DFOO, -std=c99 …)
 #   WORK_DIR     — CMAKE_SOURCE_DIR (absolution resolves targets relative to this)
 
@@ -27,6 +30,17 @@ list(APPEND _cmd
 )
 if(INVARIANT)
     list(APPEND _cmd -i "${INVARIANT}")
+endif()
+foreach(_pair "ZERO_SYMBOLS;-Z" "LENIENT_ZERO_SYMBOLS;--lenient-zero-symbols" "DOMAIN_OVERRIDES;-O")
+    list(GET _pair 0 _var)
+    list(GET _pair 1 _opt)
+    string(REPLACE "," ";" _files "${${_var}}")
+    foreach(_f ${_files})
+        list(APPEND _cmd "${_opt}" "${_f}")
+    endforeach()
+endforeach()
+if(NO_POST_CHECK)
+    list(APPEND _cmd --no-post-check)
 endif()
 list(APPEND _cmd --)
 foreach(_f ${_flags})
