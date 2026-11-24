@@ -316,6 +316,10 @@ LibFuzzer entrypoint that:
    given to `--entry`) with remaining bytes
 3. Calls `check_invariant` unless harness returned `-1`
 
+A failed check prints `absolution: invariant violated` and calls `abort()`, so
+libFuzzer saves the input as a crash. The check is not an `assert()`, so
+`-DNDEBUG` does not remove it.
+
 ## Tips
 
 ### Exporting and editing invariants

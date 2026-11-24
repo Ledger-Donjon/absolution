@@ -257,9 +257,9 @@ pub fn writeFuzzerC(
     defer redef_file.close(io);
 
     try file.writeStreamingAll(io,
-        \\#include <assert.h>
         \\#include <stdint.h>
         \\#include <stddef.h>
+        \\#include <stdlib.h>
         \\#include <string.h>
         \\#include <stdio.h>
         \\
@@ -787,7 +787,10 @@ fn emitEntrypoint(allocator: std.mem.Allocator, io: std.Io, file: *std.Io.File, 
 
     try file.writeStreamingAll(io,
         \\    if (res == -1) return 0;
-        \\    assert(check_invariant() == 0);
+        \\    if (check_invariant() != 0) {
+        \\        fprintf(stderr, "absolution: invariant violated\n");
+        \\        abort();
+        \\    }
         \\    return 0;
         \\}
     );
@@ -1532,7 +1535,8 @@ test "writeFuzzerC end-to-end produces valid output" {
 
     var buf: [16384]u8 = undefined;
     const out = try readTmpFile(&tmp, "fuzzer.c", &buf);
-    try std.testing.expect(std.mem.indexOf(u8, out, "#include <assert.h>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "#include <stdlib.h>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "if (check_invariant() != 0) {") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "int TestHarness(const uint8_t *data, size_t size)") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "#define ABSOLUTION_GLOBALS_SIZE 4") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "uint8_t __attribute__((weak)) g[8]") != null);

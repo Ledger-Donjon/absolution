@@ -1,24 +1,35 @@
 # ApplyRedef.cmake — script-mode helper invoked at build time.
 #
-# Reads a absolution redefinition file and applies objcopy --redefine-syms /
-# --globalize-symbol to each listed object file.  All renames for a given
+# Reads a absolution redefinition file and writes, for the N-th listed object
+# file, OUT_DIR/<N>.o: a copy with objcopy --redefine-syms / --globalize-symbol
+# applied, or a plain copy when it has no renames. All renames for a given
 # object file are batched into a single objcopy invocation instead of one
 # call per symbol, reducing process-fork overhead to O(unique_objects).
 #
+# The compiled objects are never modified: rewriting them in place changes
+# their mtime, so ninja finds their stored deps out of date and recompiles
+# every renamed TU on the next build.
+#
 # Expected -D variables:
-#   REDEF_FILE    — path to the absolution-generated .redef file
-#   OBJ_LIST_FILE — path to a text file listing one object-file path per line
-#   OBJCOPY       — path to the objcopy (or llvm-objcopy) executable
-
-if(NOT EXISTS "${REDEF_FILE}")
-    return()
-endif()
+#   REDEF_FILE     — path to the absolution-generated .redef file
+#   OBJ_LIST_FILE  — path to a text file listing one object-file path per line
+#   OBJCOPY        — path to the objcopy (or llvm-objcopy) executable
+#   OUT_DIR        — directory receiving <N>.o, linked instead of the objects
+#   EXPECTED_COUNT — number of objects the link expects (OUT_DIR/0.o ...)
 
 if(NOT EXISTS "${OBJ_LIST_FILE}")
     message(FATAL_ERROR "ApplyRedef: object list file not found: ${OBJ_LIST_FILE}")
 endif()
 
 file(STRINGS "${OBJ_LIST_FILE}" _obj_paths)
+list(LENGTH _obj_paths _obj_count)
+if(NOT _obj_count EQUAL EXPECTED_COUNT)
+    message(FATAL_ERROR
+        "ApplyRedef: ${OBJ_LIST_FILE} lists ${_obj_count} object(s) but the link "
+        "expects ${EXPECTED_COUNT}; a TARGETS source compiles to no object or to "
+        "several (see _absolution_compiled_count() in AbsolutionFuzzer.cmake).")
+endif()
+file(MAKE_DIRECTORY "${OUT_DIR}")
 
 # ── Helper: check if string ends with a given suffix ────────────────────────
 function(_ends_with _str _suffix _result)
@@ -84,7 +95,10 @@ endfunction()
 # _unique_objs        — ordered list of unique object file paths
 # _renames_<N>        — interleaved (old new old new …) list for obj index N
 # _new_syms_<N>       — list of new symbol names for obj index N (for globalize)
-file(STRINGS "${REDEF_FILE}" _lines)
+set(_lines "")
+if(EXISTS "${REDEF_FILE}")
+    file(STRINGS "${REDEF_FILE}" _lines)
+endif()
 
 set(_unique_objs "")
 
@@ -134,11 +148,21 @@ foreach(_line ${_lines})
     list(APPEND _new_syms_${_idx} "${_new_sym}")
 endforeach()
 
-# ── Pass 2: one objcopy invocation per object file ───────────────────────────
-set(_idx 0)
-foreach(_obj ${_unique_objs})
-    # Write a --redefine-syms file: one "old new" pair per line.
-    set(_syms_file "${_obj}.redefine_syms.tmp")
+# ── Pass 2: OUT_DIR/<N>.o for every listed object ────────────────────────────
+# configure_file(COPYONLY) leaves an identical output untouched, so the fuzzer
+# relinks only when some object actually changed.
+set(_n 0)
+foreach(_obj ${_obj_paths})
+    set(_out "${OUT_DIR}/${_n}.o")
+    math(EXPR _n "${_n} + 1")
+    list(FIND _unique_objs "${_obj}" _idx)
+    if(_idx EQUAL -1)
+        configure_file("${_obj}" "${_out}" COPYONLY)
+        continue()
+    endif()
+
+    set(_tmp "${_out}.tmp")
+    set(_syms_file "${_out}.redefine_syms.tmp")
     set(_syms_content "")
 
     set(_i 0)
@@ -155,7 +179,7 @@ foreach(_obj ${_unique_objs})
 
     # Single rename pass for all symbols in this .o
     execute_process(
-        COMMAND "${OBJCOPY}" "--redefine-syms=${_syms_file}" "${_obj}"
+        COMMAND "${OBJCOPY}" "--redefine-syms=${_syms_file}" "${_obj}" "${_tmp}"
         RESULT_VARIABLE _rc)
     if(NOT _rc EQUAL 0)
         message(FATAL_ERROR "objcopy --redefine-syms failed for ${_obj}")
@@ -168,12 +192,12 @@ foreach(_obj ${_unique_objs})
     endforeach()
 
     execute_process(
-        COMMAND "${OBJCOPY}" ${_globalize_args} "${_obj}"
+        COMMAND "${OBJCOPY}" ${_globalize_args} "${_tmp}"
         RESULT_VARIABLE _rc)
     if(NOT _rc EQUAL 0)
         message(FATAL_ERROR "objcopy --globalize-symbol failed for ${_obj}")
     endif()
 
-    file(REMOVE "${_syms_file}")
-    math(EXPR _idx "${_idx} + 1")
+    configure_file("${_tmp}" "${_out}" COPYONLY)
+    file(REMOVE "${_tmp}" "${_syms_file}")
 endforeach()
