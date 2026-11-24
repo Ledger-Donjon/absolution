@@ -160,9 +160,9 @@ function(_absolution_collect_all
     set(${_visited}         "${_vis}"   PARENT_SCOPE)
 endfunction()
 
-# ── Model inputs of the generate step ───────────────────────────────────────
+# ── Model inputs shared by the fuzzer and symbolic drivers ──────────────────
 # Resolves the invariant / zero lists / overrides to absolute paths and returns
-# the -D arguments for RunAbsolution.cmake plus the files the generate step
+# the -D arguments for RunAbsolution*.cmake plus the files the generate step
 # must depend on (editing any of them regenerates the driver).
 function(_absolution_model_args _prefix _out_defs _out_deps)
     set(_deps "")

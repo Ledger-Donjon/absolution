@@ -113,3 +113,60 @@ no need to duplicate them. This single call creates a CMake target that:
    `.redef` file
 4. **Links** everything: generated `fuzzer.c` + user harness + modified `.o`
    files, with `-fsanitize=fuzzer,address`
+
+## Symbolic execution (KLEE)
+
+`absolution_add_symbolic_target()` is the symbolic sibling of
+`absolution_add_fuzzer()`. It takes the **same** `TARGETS` / `HARNESS` / `ENTRY`,
+so the symbolic run starts at the same entry with the same
+`sample_invariant()` input model — but instead of a libFuzzer executable it
+emits a single LLVM bitcode module for KLEE.
+
+```cmake
+absolution_add_symbolic_target(
+    NAME sym_decode
+    TARGETS src/decoder.c src/session.c
+    HARNESS fuzz/fuzz_decode.c
+    ENTRY   FuzzDecode
+    APDU_SIZE 300
+    LINK_LIBRARIES protocol
+    BITCODE_TOOLCHAIN_BIN "${KLEE_CLANG13_BIN}"   # KLEE-compatible clang+llvm
+)
+```
+
+Under the hood the target:
+
+1. **Runs absolution `--symbolic klee`** to generate `symbolic.c` (the
+   `AbsolutionSymbolicTestOneInput` + `main` driver) and `symbolic.redef`.
+2. **Compiles** each target `.c`, the driver, and the harness to LLVM bitcode
+   with the KLEE-compatible clang (`-DABSOLUTION_KLEE`).
+3. **Renames globals at the IR level** per the `.redef` (`llvm-objcopy` cannot
+   touch bitcode): `@config` → `@src_decoder_c_config`, dropping `internal`
+   linkage so the app's now-strong definition overrides the driver's weak
+   placeholder — i.e. they share one storage object, exactly like the fuzzer's
+   objcopy step.
+4. **Links** everything with `llvm-link` into `sym_decode.bc`.
+
+Build and run:
+
+```bash
+cmake -B build -G Ninja \
+    -DENABLE_SYMBOLIC=ON \
+    -DAbsolution_DIR=<path-to-absolution>/zig-out/lib/cmake/Absolution \
+    -DKLEE_CLANG13_BIN=/path/to/clang+llvm-13/bin
+
+cmake --build build --target sym_decode        # build the bitcode
+cmake --build build --target sym_decode_klee   # run KLEE
+```
+
+KLEE finds the planted overflow within seconds: `config.max_payload` is a
+sampled `uint16_t`, so when it exceeds the fixed `payload[256]` buffer the
+`memcpy` in `decode_packet()` writes out of bounds —
+
+```
+KLEE: ERROR: libc/string/memcpy.c:29: memory error: out of bound pointer
+```
+
+Add a `.zon` invariant constraining `max_payload <= 256` and KLEE instead
+proves the path safe (0 errors), demonstrating the domain model carries
+straight through to the solver.
