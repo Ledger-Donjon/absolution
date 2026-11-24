@@ -13,6 +13,8 @@ const type_flatten = @import("type_flatten.zig");
 pub const Domain = ir.Domain;
 pub const Field = ir.Field;
 pub const Global = ir.Global;
+/// Enumerator values by enum tag and by typedef name.
+pub const EnumTable = std.StringHashMapUnmanaged([]const i128);
 
 const ParseError = std.mem.Allocator.Error;
 const FieldsBuilder = std.ArrayListUnmanaged(Field);
@@ -32,6 +34,8 @@ toolchain: aro.Toolchain,
 builtin_source: aro.Source = undefined,
 command_line_source: aro.Source = undefined,
 compat_source: aro.Source = undefined,
+/// Filled by `collectGlobals`, owned by `arena`.
+enums: EnumTable = .empty,
 
 /// Initialize the parser, discover the toolchain, and prime diagnostics.
 /// Args:
@@ -217,7 +221,40 @@ pub fn collectGlobals(p: *Parser, paths: []const []const u8) !std.ArrayList(Glob
     var tree = try pp.parse();
     defer tree.deinit();
 
+    try collectEnumsFromTree(p, tree);
     return try collectGlobalsFromTree(p.toolchain.driver.comp, tree, p.gpa);
+}
+
+/// Record every complete enum reachable from a top-level declaration, under its
+/// tag and under each typedef name that aliases it.
+fn collectEnumsFromTree(p: *Parser, tree: aro.Tree) !void {
+    const comp = tree.comp;
+    for (tree.root_decls.items) |idx| {
+        const node = idx.get(&tree);
+        const qt, const alias: ?[]const u8 = switch (node) {
+            .enum_decl => |d| .{ d.container_qt, null },
+            .typedef => |t| .{ t.qt, tree.tokSlice(t.name_tok) },
+            else => continue,
+        };
+        const e = switch (qt.base(comp).type) {
+            .@"enum" => |e| e,
+            else => continue,
+        };
+        if (e.incomplete) continue;
+        const decl = switch (e.decl_node.get(&tree)) {
+            .enum_decl => |d| d,
+            else => continue,
+        };
+
+        const name = alias orelse if (e.isAnonymous(comp)) continue else e.name.lookup(comp);
+        const vals = try p.arena.alloc(i128, decl.fields.len);
+        const complete = for (decl.fields, vals) |field_node, *v| {
+            const val = tree.value_map.get(field_node) orelse break false;
+            v.* = val.toInt(i128, comp) orelse break false;
+        } else true;
+        if (!complete) continue;
+        try p.enums.put(p.arena, try p.arena.dupe(u8, name), vals);
+    }
 }
 
 /// Go through an entire Tree and extracts its globals.
