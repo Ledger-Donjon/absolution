@@ -54,7 +54,7 @@ pub fn main(init: std.process.Init) !void {
     }
 
     if (opts.zero_symbols.len + opts.lenient_zero_symbols.len + opts.domain_overrides.len > 0) {
-        try applyTuning(gpa, io, arena, globals.items, &parser.enums, opts);
+        try applyTuning(io, arena, globals.items, &parser.enums, opts);
     }
 
     try ir.validateGlobalsDomains(globals.items);
@@ -72,29 +72,21 @@ pub fn main(init: std.process.Init) !void {
     if (opts.seed) |seed_path| try seed.writeSeed(io, seed_path, needed_bytes);
 }
 
-fn readAll(gpa: std.mem.Allocator, io: std.Io, arena: std.mem.Allocator, path: []const u8) ![]const u8 {
-    const bytes = std.Io.Dir.cwd().readFileAllocOptions(io, path, gpa, .unlimited, .@"1", null) catch |err| {
-        std.debug.print("error: cannot read {s}: {s}\n", .{ path, @errorName(err) });
-        return err;
-    };
-    defer gpa.free(bytes);
-    return arena.dupe(u8, bytes);
-}
-
 /// Zero lists and domain overrides, applied in this run so the emitted sampler
 /// and the exported `.zon` are already tuned.
-fn applyTuning(gpa: std.mem.Allocator, io: std.Io, arena: std.mem.Allocator, globals: []Global, enums: *const absolution.Parser.EnumTable, opts: Options) !void {
+fn applyTuning(io: std.Io, arena: std.mem.Allocator, globals: []Global, enums: *const absolution.Parser.EnumTable, opts: Options) !void {
     const Tuning = absolution.Tuning;
+    const cwd = std.Io.Dir.cwd();
     var zeros: std.ArrayList(Tuning.ZeroSymbol) = .empty;
     for (opts.zero_symbols) |path| {
-        try zeros.appendSlice(arena, try Tuning.parseZeroSymbols(arena, try readAll(gpa, io, arena, path), false));
+        try zeros.appendSlice(arena, try Tuning.parseZeroSymbols(arena, try cwd.readFileAlloc(io, path, arena, .unlimited), false));
     }
     for (opts.lenient_zero_symbols) |path| {
-        try zeros.appendSlice(arena, try Tuning.parseZeroSymbols(arena, try readAll(gpa, io, arena, path), true));
+        try zeros.appendSlice(arena, try Tuning.parseZeroSymbols(arena, try cwd.readFileAlloc(io, path, arena, .unlimited), true));
     }
     var overrides: std.ArrayList(Tuning.Override) = .empty;
     for (opts.domain_overrides) |path| {
-        try overrides.appendSlice(arena, try Tuning.parseOverrides(arena, try readAll(gpa, io, arena, path), path));
+        try overrides.appendSlice(arena, try Tuning.parseOverrides(arena, try cwd.readFileAlloc(io, path, arena, .unlimited), path));
     }
 
     const rep = try Tuning.apply(arena, globals, zeros.items, overrides.items, enums);
