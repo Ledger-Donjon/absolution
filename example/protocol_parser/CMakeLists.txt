@@ -51,3 +51,43 @@ if(ENABLE_FUZZING)
             protocol
     )
 endif()
+
+# ── Symbolic-execution target (KLEE) ────────────────────────────────────────
+#
+# Enable with:
+#   cmake -B build -G Ninja \
+#       -DENABLE_SYMBOLIC=ON \
+#       -DAbsolution_DIR=<prefix>/lib/cmake/Absolution \
+#       -DKLEE_CLANG13_BIN=/path/to/clang+llvm-13/bin \
+#       -DKLEE_COMMAND="snap;run;klee"              # only if klee is not on PATH
+#
+#   cmake --build build --target sym_decode        # build the bitcode
+#   cmake --build build --target sym_decode_klee   # run KLEE
+#
+# Same TARGETS/HARNESS/ENTRY as the fuzzer: the symbolic driver reuses the
+# identical sample_invariant() input model, so KLEE starts at the same entry.
+
+option(ENABLE_SYMBOLIC "Build symbolic-execution (KLEE) target" OFF)
+set(KLEE_COMMAND "klee" CACHE STRING "KLEE launcher, as a list (e.g. snap;run;klee)")
+
+if(ENABLE_SYMBOLIC)
+    find_package(Absolution REQUIRED)
+
+    absolution_add_symbolic_target(
+        NAME sym_decode
+        TARGETS
+            src/decoder.c
+            src/session.c
+        HARNESS
+            fuzz/fuzz_decode.c
+        ENTRY
+            FuzzDecode
+        APDU_SIZE 300
+        LINK_LIBRARIES
+            protocol
+        BITCODE_TOOLCHAIN_BIN "${KLEE_CLANG13_BIN}"
+        LD_LIBRARY_PATH       "${KLEE_LD_LIBRARY_PATH}"
+        KLEE_COMMAND          ${KLEE_COMMAND}
+        KLEE_MAX_TIME         45
+    )
+endif()

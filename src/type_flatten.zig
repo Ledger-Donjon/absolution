@@ -136,6 +136,10 @@ pub fn flattenType(
         domain = .{ .values = &.{ &[_]u8{0}, &[_]u8{1} } };
     }
 
+    // Pointer-typed leaves (incl. typedef'd pointers, arrays-of-pointers after
+    // dim peeling) are flagged so the symbolic sampler can skip symbolizing them.
+    const is_pointer = qt.is(tree.comp, .pointer);
+
     const dims_info = try dim_stack.cloneDims(allocator);
     errdefer allocator.free(dims_info);
 
@@ -148,6 +152,7 @@ pub fn flattenType(
         .bit_width = bits,
         .dims = dims_info,
         .is_padding = false,
+        .is_pointer = is_pointer,
         .domain = domain,
     });
 }
