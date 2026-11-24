@@ -19,8 +19,16 @@
 #   NAME      (required)  — name of the fuzzer executable target.
 #   TARGETS   (required)  — C source files whose globals will be fuzzed.
 #   HARNESS   (optional)  — C file containing the user's test function.
+#   EXTRA_SOURCES         — more harness-side C files (glue, generated tables):
+#                           linked into the fuzzer, never sampled.
 #   ENTRY     (optional)  — harness function name (default: AbsolutionTestOneInput).
 #   INVARIANT (optional)  — .zon constraint file.
+#   ZERO_SYMBOLS          — zero-symbol list(s); matched globals get one all-zero
+#                           value. Selectors that match nothing are reported.
+#   LENIENT_ZERO_SYMBOLS  — zero-symbol list(s) shared across projects (e.g. an
+#                           SDK list); selectors that match nothing are silent.
+#   DOMAIN_OVERRIDES      — override file(s), '<global>.<field> = values ...|top|enum <T>',
+#                           applied after the zero lists. Unmatched lines fail.
 #   INCLUDE_DIRECTORIES   — extra -I paths for compiling targets.
 #   COMPILE_DEFINITIONS   — preprocessor defines (NAME or NAME=VALUE).
 #   COMPILE_OPTIONS       — extra compiler flags for compiling targets.
@@ -31,6 +39,8 @@
 #                           Non-target names (e.g. -lm) and IMPORTED targets are
 #                           linked normally.
 #   SANITIZERS            — sanitizer list (default: fuzzer,address).
+#   NO_POST_CHECK         — flag: do not assert check_invariant() after the
+#                           harness (it may leave globals outside the domain).
 #
 # Created targets:
 #   ${NAME}_objs      — OBJECT library containing compiled target sources.
@@ -150,6 +160,33 @@ function(_absolution_collect_all
     set(${_visited}         "${_vis}"   PARENT_SCOPE)
 endfunction()
 
+# ── Model inputs of the generate step ───────────────────────────────────────
+# Resolves the invariant / zero lists / overrides to absolute paths and returns
+# the -D arguments for RunAbsolution.cmake plus the files the generate step
+# must depend on (editing any of them regenerates the driver).
+function(_absolution_model_args _prefix _out_defs _out_deps)
+    set(_deps "")
+    set(_inv "")
+    if(${_prefix}_INVARIANT)
+        get_filename_component(_inv "${${_prefix}_INVARIANT}" ABSOLUTE)
+        list(APPEND _deps "${_inv}")
+    endif()
+    set(_defs "-DINVARIANT=${_inv}")
+    foreach(_kind ZERO_SYMBOLS LENIENT_ZERO_SYMBOLS DOMAIN_OVERRIDES)
+        set(_files "")
+        foreach(_f ${${_prefix}_${_kind}})
+            get_filename_component(_af "${_f}" ABSOLUTE)
+            list(APPEND _files "${_af}")
+            list(APPEND _deps "${_af}")
+        endforeach()
+        # Lists cross the -P boundary comma-joined.
+        string(REPLACE ";" "," _csv "${_files}")
+        list(APPEND _defs "-D${_kind}=${_csv}")
+    endforeach()
+    set(${_out_defs} "${_defs}" PARENT_SCOPE)
+    set(${_out_deps} "${_deps}" PARENT_SCOPE)
+endfunction()
+
 # ── Objects the OBJECT library will produce ─────────────────────────────────
 # $<TARGET_OBJECTS> is only known at generate time, but the renamed copies the
 # fuzzer links must be named at configure time: count the sources that compile
@@ -176,9 +213,9 @@ endfunction()
 function(absolution_add_fuzzer)
     cmake_parse_arguments(
         FUZZ
-        ""
+        "NO_POST_CHECK"
         "NAME;HARNESS;INVARIANT;ENTRY;SANITIZERS"
-        "TARGETS;COMPILE_OPTIONS;INCLUDE_DIRECTORIES;COMPILE_DEFINITIONS;LINK_LIBRARIES"
+        "TARGETS;EXTRA_SOURCES;COMPILE_OPTIONS;INCLUDE_DIRECTORIES;COMPILE_DEFINITIONS;LINK_LIBRARIES;ZERO_SYMBOLS;LENIENT_ZERO_SYMBOLS;DOMAIN_OVERRIDES"
         ${ARGN}
     )
 
@@ -290,10 +327,7 @@ $<JOIN:$<TARGET_PROPERTY:${_OBJ_LIB},COMPILE_OPTIONS>,\n>
 "
     )
 
-    set(_abs_inv "")
-    if(FUZZ_INVARIANT)
-        get_filename_component(_abs_inv "${FUZZ_INVARIANT}" ABSOLUTE)
-    endif()
+    _absolution_model_args(FUZZ _model_defs _model_deps)
 
     set(_GENERATE_TARGET "${FUZZ_NAME}_generate")
 
@@ -306,11 +340,12 @@ $<JOIN:$<TARGET_PROPERTY:${_OBJ_LIB},COMPILE_OPTIONS>,\n>
             "-DREDEF=${_REDEF_FILE}"
             "-DSEED=${_SEED_FILE}"
             "-DENTRY=${FUZZ_ENTRY}"
-            "-DINVARIANT=${_abs_inv}"
+            "-DNO_POST_CHECK=${FUZZ_NO_POST_CHECK}"
+            ${_model_defs}
             "-DFLAGS_FILE=${_FLAGS_FILE}"
             "-DWORK_DIR=${CMAKE_SOURCE_DIR}"
             -P "${_ABSOLUTION_MODULE_DIR}/RunAbsolution.cmake"
-        DEPENDS "${ABSOLUTION_EXECUTABLE}" ${_ABS_TARGETS} $<TARGET_OBJECTS:${_OBJ_LIB}> "${_FLAGS_FILE}" "${_TARGETS_FILE}"
+        DEPENDS "${ABSOLUTION_EXECUTABLE}" ${_ABS_TARGETS} $<TARGET_OBJECTS:${_OBJ_LIB}> "${_FLAGS_FILE}" "${_TARGETS_FILE}" ${_model_deps}
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
         COMMENT "[absolution] Generating harness for ${FUZZ_NAME}"
         VERBATIM
@@ -380,6 +415,9 @@ $<JOIN:$<TARGET_PROPERTY:${_OBJ_LIB},COMPILE_OPTIONS>,\n>
 
     if(FUZZ_HARNESS)
         target_sources(${FUZZ_NAME} PRIVATE "${FUZZ_HARNESS}")
+    endif()
+    if(FUZZ_EXTRA_SOURCES)
+        target_sources(${FUZZ_NAME} PRIVATE ${FUZZ_EXTRA_SOURCES})
     endif()
 
     target_compile_options(${FUZZ_NAME} PRIVATE -g "-fsanitize=${FUZZ_SANITIZERS}")

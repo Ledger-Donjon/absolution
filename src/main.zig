@@ -23,6 +23,9 @@ pub fn main(init: std.process.Init) !void {
     const opts = parseArgs(gpa, io, init.minimal.args) catch return;
     defer gpa.free(opts.targets);
     defer gpa.free(opts.cflags);
+    defer gpa.free(opts.zero_symbols);
+    defer gpa.free(opts.lenient_zero_symbols);
+    defer gpa.free(opts.domain_overrides);
 
     // Parser setup
     var parser = try absolution.Parser.init(gpa, arena, io, opts.cflags);
@@ -50,19 +53,67 @@ pub fn main(init: std.process.Init) !void {
         func_symbols = res.func_symbols;
     }
 
+    if (opts.zero_symbols.len + opts.lenient_zero_symbols.len + opts.domain_overrides.len > 0) {
+        try applyTuning(gpa, io, arena, globals.items, &parser.enums, opts);
+    }
+
     try ir.validateGlobalsDomains(globals.items);
 
     // Compute needed bytes
     const needed_bytes = seed.neededBytesFromGlobals(globals.items);
 
     // Code generation
-    try emit.writeFuzzerC(gpa, io, globals.items, needed_bytes, opts.out_c, opts.redef, opts.entry, func_symbols);
+    try emit.writeFuzzerC(gpa, io, globals.items, needed_bytes, opts.out_c, opts.redef, opts.entry, func_symbols, opts.post_check);
 
     // Optional: Save invariant to file
     if (opts.zon) |zon_path| try writeInvariant(gpa, io, globals.items, zon_path);
 
     // Optional: Generate an arbitrary seed
     if (opts.seed) |seed_path| try seed.writeSeed(io, seed_path, needed_bytes);
+}
+
+fn readAll(gpa: std.mem.Allocator, io: std.Io, arena: std.mem.Allocator, path: []const u8) ![]const u8 {
+    const bytes = std.Io.Dir.cwd().readFileAllocOptions(io, path, gpa, .unlimited, .@"1", null) catch |err| {
+        std.debug.print("error: cannot read {s}: {s}\n", .{ path, @errorName(err) });
+        return err;
+    };
+    defer gpa.free(bytes);
+    return arena.dupe(u8, bytes);
+}
+
+/// Zero lists and domain overrides, applied in this run so the emitted sampler
+/// and the exported `.zon` are already tuned.
+fn applyTuning(gpa: std.mem.Allocator, io: std.Io, arena: std.mem.Allocator, globals: []Global, enums: *const absolution.Parser.EnumTable, opts: Options) !void {
+    const Tuning = absolution.Tuning;
+    var zeros: std.ArrayList(Tuning.ZeroSymbol) = .empty;
+    for (opts.zero_symbols) |path| {
+        try zeros.appendSlice(arena, try Tuning.parseZeroSymbols(arena, try readAll(gpa, io, arena, path), false));
+    }
+    for (opts.lenient_zero_symbols) |path| {
+        try zeros.appendSlice(arena, try Tuning.parseZeroSymbols(arena, try readAll(gpa, io, arena, path), true));
+    }
+    var overrides: std.ArrayList(Tuning.Override) = .empty;
+    for (opts.domain_overrides) |path| {
+        try overrides.appendSlice(arena, try Tuning.parseOverrides(arena, try readAll(gpa, io, arena, path), path));
+    }
+
+    const rep = try Tuning.apply(arena, globals, zeros.items, overrides.items, enums);
+    std.debug.print("tuning: {d} globals ({d} zeroed, {d} fuzzable), {d} override(s) applied\n", .{
+        rep.total, rep.zeroed, rep.total - rep.zeroed, rep.overridden,
+    });
+    for (rep.stale_zeros) |z| {
+        if (z.source) |src| {
+            std.debug.print("warning: zero symbol '{s}@{s}' matched no global\n", .{ z.name, src });
+        } else {
+            std.debug.print("warning: zero symbol '{s}' matched no global\n", .{z.name});
+        }
+    }
+    if (rep.unmatched.len > 0) {
+        for (rep.unmatched) |o| {
+            std.debug.print("{s}:{d}: error: override '{s}{s}' matched no field\n", .{ o.file, o.line, o.global, o.field });
+        }
+        return error.UnmatchedOverride;
+    }
 }
 
 fn writeInvariant(allocator: std.mem.Allocator, io: std.Io, globals: []const Global, zon_path: []const u8) !void {
@@ -84,6 +135,10 @@ const Options = struct {
     zon: ?[]const u8,
     seed: ?[]const u8,
     entry: []const u8,
+    post_check: bool,
+    zero_symbols: []const []const u8,
+    lenient_zero_symbols: []const []const u8,
+    domain_overrides: []const []const u8,
     cflags: []const []const u8,
 };
 
@@ -96,6 +151,10 @@ const cli = clap.parseParamsComptime(
     \\-z, --zon <str>          Optional zon output path.
     \\-s, --seed <str>         Optional seed output path (default: fuzzer.seed).
     \\-e, --entry <str>        Optional harness function name (default: AbsolutionTestOneInput).
+    \\--no-post-check          Do not assert check_invariant() after the harness returns (for harnesses that drive the globals out of the sampled domain, e.g. multi-step sessions).
+    \\-Z, --zero-symbols <str>...  Zero-symbol list(s): matched globals get a single all-zero value. Unmatched selectors are reported.
+    \\--lenient-zero-symbols <str>...  Zero-symbol list(s) shared across projects: unmatched selectors are not reported.
+    \\-O, --domain-overrides <str>...  Domain override file(s) ('<global>.<field> = values ...|top|enum <T>'), applied after the zero lists. Unmatched overrides are fatal.
     \\<str>...                 C compiler flags after '--' (e.g. -I path -DFOO -fshort-enums).
     \\
 );
@@ -140,6 +199,13 @@ fn parseArgs(allocator: std.mem.Allocator, io: std.Io, args: std.process.Args) !
     const cflags = try allocator.dupe([]const u8, res.positionals[0]);
     errdefer allocator.free(cflags);
 
+    const zero_symbols = try allocator.dupe([]const u8, res.args.@"zero-symbols");
+    errdefer allocator.free(zero_symbols);
+    const lenient_zero_symbols = try allocator.dupe([]const u8, res.args.@"lenient-zero-symbols");
+    errdefer allocator.free(lenient_zero_symbols);
+    const domain_overrides = try allocator.dupe([]const u8, res.args.@"domain-overrides");
+    errdefer allocator.free(domain_overrides);
+
     return .{
         .targets = targets,
         .redef = redef_path,
@@ -148,6 +214,10 @@ fn parseArgs(allocator: std.mem.Allocator, io: std.Io, args: std.process.Args) !
         .zon = res.args.zon,
         .seed = res.args.seed orelse "fuzzer.seed",
         .entry = res.args.entry orelse "AbsolutionTestOneInput",
+        .post_check = res.args.@"no-post-check" == 0,
+        .zero_symbols = zero_symbols,
+        .lenient_zero_symbols = lenient_zero_symbols,
+        .domain_overrides = domain_overrides,
         .cflags = cflags,
     };
 }
