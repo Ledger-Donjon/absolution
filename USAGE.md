@@ -333,11 +333,15 @@ run. Pass `--no-post-check` (CMake: `NO_POST_CHECK`) to drop the check.
 
 ### Zero lists and domain overrides
 
-Most projects only need a few tweaks on top of the discovered model. Instead
-of exporting, editing and re-importing a `.zon`, pass them in the same run:
+Most projects only need a few tweaks on top of the discovered model. Pass them
+in the same run, by name: an edited `.zon` lists every global and field, so its
+edits have to be redone after the code changes, while a list or an override
+keeps applying (an override that matches no field is an error). The model is
+still generated in full: `--zon` writes it with the tweaks applied, so every
+invariant stays written down.
 
 ```bash
-absolution -t app.c -o fuzzer.c -r fuzzer.redef \
+absolution -t app.c -o fuzzer.c -r fuzzer.redef --zon fuzzer.zon \
     -Z zero-symbols.txt --lenient-zero-symbols sdk-zero-symbols.txt \
     -O domain-overrides.txt -- -Iinclude
 ```
@@ -366,7 +370,8 @@ are byte strings with `\xNN` escapes, zero-padded to the field element size.
 the parsed sources.
 The order is: `--invariant`, then zero lists, then overrides. `--zon` exports
 the tuned model. In CMake, pass `ZERO_SYMBOLS`, `LENIENT_ZERO_SYMBOLS` and
-`DOMAIN_OVERRIDES`; editing any of these files regenerates the driver.
+`DOMAIN_OVERRIDES`; editing any of these files regenerates the driver, and the
+tuned model is written next to it as `fuzzer.c.zon`.
 
 ### Exporting and editing invariants
 
